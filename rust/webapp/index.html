@@ -1,0 +1,218 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+</head>
+<body>
+
+    <button id="sourceAToggle" type="button">SourceA</button>
+    <button id="sourceBToggle" type="button">SourceB</button>
+    <button id="pause" type="button">Pause</button>
+
+    <div id="scatterPlot" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+    <div id="chart2" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+
+<script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+<script>
+
+    var activeSources = new Set();
+    var pauseConfig = false;
+
+    const scatterLen = 100;
+    const sourceCount = 2;
+    const sourceABtn = document.querySelector("#sourceAToggle");
+    const sourceBBtn = document.querySelector("#sourceBToggle");
+    const pauseBtn = document.querySelector("#pause");
+
+    sourceABtn.opts = { source: "A" };
+    sourceBBtn.opts = { source: "B" };
+
+    /* Scatter plot */
+    const scatterWebSocket = new WebSocket("ws://localhost:3000/scatter");
+    var scatterIdx = 100;
+
+    var scatter = new CanvasJS.Chart("scatterPlot", {
+        animationEnabled: true,
+        title:{
+            text: "High Level Timeline"
+        },
+        axisX: {
+            title:"Server Load (in TPS)"
+        },
+        axisY:{
+            title: "Response Time (in ms)",
+            includeZero: true,
+            minimum: 0,
+            maximum: 40
+        },
+        legend:{
+            horizontalAlign: "left",
+            verticalAlign: "top"
+        },
+        toolTip: {
+            shared: true
+        },
+        data: [],
+    });
+
+    /* sources: [init, A, B...] */
+    scatter.options.data.push({ type: "scatter",
+                                name: " ",
+                                showInLegend: true,
+                                markerType: "none",
+                                dataPoints: scatterInitData() });
+    scatter.options.data.push({ type: "scatter",
+                                name: "A",
+                                showInLegend: false,
+                                markerType: "none",
+                                dataPoints: [] });
+    scatter.options.data.push({ type: "scatter",
+                                name: "B",
+                                showInLegend: false,
+                                markerType: "none",
+                                dataPoints: [] });
+
+    var chart2 = new CanvasJS.Chart("chart2",{
+        data: [{
+            type: "column",
+            dataPoints : [
+                { label: "apple",  y: 10  },
+                { label: "orange", y: 15  },
+                { label: "banana", y: 25  },
+                { label: "mango",  y: 30  },
+                { label: "grape",  y: 28  }
+            ]
+        }]
+    });
+
+    /* Define helper functions to be called on specific events */
+
+    function scatterAddData(msg) {
+        var dataJson = JSON.parse(msg.data);
+        var dataMap = new Map();
+        for (i = 0; i < dataJson.length; i++) {
+            var item = dataJson[i];
+            dataMap.set(item[0], item[1]);
+        }
+        var l = scatter.options.data.length;
+        for (i = 0; i < l; i++) {
+            var data = scatter.options.data[i];
+            var name = data.name;
+            if (activeSources.has(name) || name === " ") {
+                var val = dataMap.get(name);
+                if (!val) {
+                    val = 0;
+                }
+                data.dataPoints.push({x: scatterIdx, y: val});
+                if (data.dataPoints.length > scatterLen) {
+                    data.dataPoints.shift();
+                }
+            }
+        }
+    }
+
+    function scatterShiftChart() {
+        scatterIdx = scatterIdx + 1;
+        scatter.axisX[0].set("maximum", scatterIdx);
+        scatter.axisX[0].set("minimum", scatterIdx - scatterLen);
+        scatter.render();
+    }
+
+    function scatterActivateIdx(idx) {
+        scatter.data[idx].set("showInLegend", true);
+        scatter.data[idx].set("markerType", "circle");
+    }
+
+    function scatterActivateSrc(src) {
+        console.log("Activate ", src);
+        if (src === "A") { scatterActivateIdx(1); }
+        else if (src === "B") { scatterActivateIdx(2); }
+    }
+
+    function scatterDeactivateIdx(idx) {
+        scatter.data[idx].set("showInLegend", false);
+        scatter.data[idx].set("markerType", "none");
+        scatter.data[idx].set("dataPoints", []);
+    }
+
+    function scatterDeactivateSrc(src) {
+        console.log("Deactivate ", src);
+        if (src === "A") { scatterDeactivateIdx(1); }
+        else if (src === "B") { scatterDeactivateIdx(2); }
+    }
+
+    function scatterInitData() {
+        var data = [];
+        for (var i = 0; i < scatterLen; i++) {
+            data.push({ x: i, y: 0, markerType: "none" });
+        }
+        return data;
+    }
+
+    function sourceToggle(btn) {
+        console.log("Flipping Source", btn.opts.source, btn.opts.enabled);
+        if (activeSources.delete(btn.opts.source)) {
+            scatterDeactivateSrc(btn.opts.source);
+        } else {
+            activeSources.add(btn.opts.source);
+            scatterActivateSrc(btn.opts.source);
+        }
+        sendConfig();
+        renderAll();
+    }
+
+    function renderAll() {
+        scatter.render();
+        chart2.render();
+    }
+
+    function sendConfig() {
+        var sources = []
+        for (const src of activeSources.values()) {
+            sources.push(src);
+        }
+        var j = JSON.stringify(
+            {
+                activeSources: sources,
+                pause: pauseConfig,
+            }
+        );
+        console.log(j);
+        var request = new Request("http://localhost:3000/config", {
+            method: 'POST',
+            body: j,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(res => res.json())
+            .then(res => console.log(res));
+    }
+
+    /* Define behaviors (i.e., callbacks) on events */
+    scatterWebSocket.onmessage = function(e) {
+        scatterAddData(e);
+    }
+
+    pauseBtn.addEventListener("click", function(e) {
+        pauseConfig = !pauseConfig;
+        sendConfig();
+    });
+
+    sourceABtn.addEventListener("click", function(e) {
+        sourceToggle(this);
+    });
+
+    sourceBBtn.addEventListener("click", function(e) {
+        sourceToggle(this);
+    });
+
+    setInterval(function(){ scatterShiftChart() }, 1000);
+
+    /* After defining everything, we render the charts! */
+    renderAll();
+
+</script>
+</body>
+</html>
