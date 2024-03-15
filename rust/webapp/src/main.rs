@@ -12,6 +12,7 @@ use axum::{
 use std::{
     collections::HashMap,
     sync::Mutex,
+    time::SystemTime,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use rand::prelude::*;
@@ -34,6 +35,13 @@ struct Config {
     pause: bool,
 }
 
+#[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
+struct Scatter2Req {
+    start: String,
+    end: String,
+}
+
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -50,6 +58,15 @@ async fn main() {
 async fn index() -> Html<&'static str> {
     Html(std::include_str!("../index.html"))
 }
+
+async fn scatter2_handler(
+    msg: Json<Scatter2Req>,
+) -> impl IntoResponse {
+    let Json(req) = msg;
+    println!("Set config {:?}", req);
+    Json(())
+}
+
 
 async fn config_handler(
     msg: Json<Config>,
@@ -106,19 +123,22 @@ async fn scatter_stream(stream: WebSocket) {
     sources.insert("A", DummyGenerator::new(20));
     sources.insert("B", DummyGenerator::new(15));
 
-    let mut data = Vec::new();
+    let mut data: Vec<(String, i32, u64)> = Vec::new();
     loop {
         let _ = try_update_config(&mut conf);
         data.clear();
-
-        if !conf.pause &&  conf.activeSources.len() > 0 {
+        if !conf.pause && conf.activeSources.len() > 0 {
             for source in &conf.activeSources {
                 let val = sources
                     .get_mut(source.as_str())
                     .unwrap()
                     .next_value(&mut thread_rng());
                 let source = source.to_owned();
-                data.push((source, val));
+                let seconds = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as u64;
+                data.push((source, val, seconds));
             }
 
             let s = serde_json::to_string(&data).unwrap();
