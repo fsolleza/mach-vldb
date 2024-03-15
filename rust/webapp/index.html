@@ -8,8 +8,9 @@
     <button id="sourceBToggle" type="button">SourceB</button>
     <button id="pause" type="button">Pause</button>
 
-    <div id="scatterPlot" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
-    <div id="chart2" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+    <div id="scatter1" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+
+    <div id="scatter2" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
 
 <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
 <script>
@@ -30,7 +31,7 @@
     const scatterWebSocket = new WebSocket("ws://localhost:3000/scatter");
     var scatterIdx = 100;
 
-    var scatter = new CanvasJS.Chart("scatterPlot", {
+    var scatter = new CanvasJS.Chart("scatter1", {
         animationEnabled: true,
         title:{
             text: "High Level Timeline"
@@ -71,19 +72,6 @@
                                 markerType: "none",
                                 dataPoints: [] });
 
-    var chart2 = new CanvasJS.Chart("chart2",{
-        data: [{
-            type: "column",
-            dataPoints : [
-                { label: "apple",  y: 10  },
-                { label: "orange", y: 15  },
-                { label: "banana", y: 25  },
-                { label: "mango",  y: 30  },
-                { label: "grape",  y: 28  }
-            ]
-        }]
-    });
-
     /* Define helper functions to be called on specific events */
 
     function scatterAddData(msg) {
@@ -103,9 +91,18 @@
                     val = 0;
                 }
                 data.dataPoints.push({x: scatterIdx, y: val});
-                if (data.dataPoints.length > scatterLen) {
-                    data.dataPoints.shift();
+                var min = scatter.axisX[0].get("minimum");
+                var splitAt = 0;
+                for (j = 0; j < data.dataPoints.length; j++) {
+                    if (data.dataPoints[j].x > min) {
+                        splitAt = j;
+                        break;
+                    }
                 }
+                var splitPoints =
+                    data.dataPoints.slice(splitAt, data.dataPoints.length);
+                console.log(splitPoints.length);
+                data.dataPoints = splitPoints;
             }
         }
     }
@@ -157,12 +154,7 @@
             scatterActivateSrc(btn.opts.source);
         }
         sendConfig();
-        renderAll();
-    }
-
-    function renderAll() {
         scatter.render();
-        chart2.render();
     }
 
     function sendConfig() {
@@ -211,8 +203,24 @@
     setInterval(function(){ scatterShiftChart() }, 1000);
 
     /* After defining everything, we render the charts! */
-    renderAll();
+    scatter.render();
 
+</script>
+<script>
+    var scatter2 = new CanvasJS.Chart("scatter2",{
+        data: [{
+            type: "column",
+            dataPoints : [
+                { label: "apple",  y: 10  },
+                { label: "orange", y: 15  },
+                { label: "banana", y: 25  },
+                { label: "mango",  y: 30  },
+                { label: "grape",  y: 28  }
+            ]
+        }]
+    });
+
+    scatter2.render();
 </script>
 </body>
 </html>

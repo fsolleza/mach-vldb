@@ -111,7 +111,7 @@ async fn scatter_stream(stream: WebSocket) {
         let _ = try_update_config(&mut conf);
         data.clear();
 
-        if !conf.pause {
+        if !conf.pause &&  conf.activeSources.len() > 0 {
             for source in &conf.activeSources {
                 let val = sources
                     .get_mut(source.as_str())
@@ -126,7 +126,7 @@ async fn scatter_stream(stream: WebSocket) {
                 println!("error {:?}", x);
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
