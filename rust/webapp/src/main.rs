@@ -39,6 +39,7 @@ struct Config {
 struct Scatter2Req {
     start: String,
     end: String,
+    sources: Vec<String>,
 }
 
 
@@ -47,7 +48,8 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/config", post(config_handler))
-        .route("/scatter", get(scatter_handler));
+        .route("/scatter", get(scatter_handler))
+        .route("/scatter2", post(scatter2_handler));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await

@@ -17,14 +17,14 @@
 	    <input type="checkbox" value="SourceB">SourceB
         <br><br>
 
-        Oldest data of lookback in seconds.
+        Timestamp of oldest data point.
         <br>
         Leaving blank will query oldest data.
         <br>
 	    <input type="text" id="startField" value="100">
         <br><br>
 
-        Most recent data to lookback in seconds.
+        Timestamp of newest data point.
         <br>
         Leaving blank will query most recent data.
         <br>
@@ -63,7 +63,7 @@
             text: "High Level Timeline"
         },
         axisX: {
-            title:"Server Load (in TPS)"
+            title:"Timestamp (Seconds since epoch)"
         },
         axisY:{
             title: "Response Time (in ms)",
@@ -155,7 +155,6 @@
     }
 
     function scatterShiftChart() {
-        scatterIdx = scatterIdx + 1;
         if (!pauseConfig) {
             console.log("rendering");
             var m = Math.floor(Date.now() / 1000);
@@ -251,7 +250,7 @@
         sourceToggle(this);
     });
 
-    setInterval(function(){ scatterShiftChart() }, 1000);
+    setInterval(function(){ scatterShiftChart() }, 1);
 
     /* After defining everything, we render the charts! */
     scatter.render();
@@ -291,22 +290,34 @@
             }
         }
 
-        console.log(start, end, sources);
-        //return JSON.stringify(
-        //    {
-        //        start: start,
-        //        end: end,
-        //        sources: sources,
-        //    }
-        //);
+        return JSON.stringify(
+            {
+                start: start,
+                end: end,
+                sources: sources,
+            }
+        );
     }
 
     scatter2Btn.addEventListener("click", function(e) {
         scatter2FormToJson(this.form);
-        //var formJson = scatter2FormToJson(this.form);
-        //console.log(formJson);
+        var j = scatter2FormToJson(this.form);
+        console.log(j);
+        var request = new Request("http://localhost:3000/scatter2", {
+            method: 'POST',
+            body: j,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(res => res.json())
+            .then(res => console.log(res));
     });
 
+    document.getElementById('startField').value = Math.floor((Date.now() / 1000)) - 100;
+    document.getElementById('endField').value = Math.floor((Date.now() / 1000));
     scatter2.render();
 </script>
 </body>
