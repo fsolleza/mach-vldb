@@ -1,5 +1,5 @@
 use std::{
-    net::{ TcpStream, TcpListener },
+    net::{ ToSocketAddrs, TcpStream, TcpListener },
     thread,
     time::Duration,
     io::{stdout, Write, Read},
@@ -7,6 +7,62 @@ use std::{
 use serde::*;
 use crossbeam::channel::*;
 
+// Create a listener socket on the specified address that spawns a new thread to
+// forward messages from incoming connections into the output receiver.
+pub fn ipc_receiver<A, T>(addr: A) -> Receiver<T>
+where
+    A: ToSocketAddrs,
+    for <'a> T: Deserialize<'a> + Send + 'static
+{
+    let (tx, rx) = unbounded();
+    let listener = TcpListener::bind(addr).unwrap();
+    thread::spawn(move || tcp_listener(listener, tx));
+    rx
+}
+
+pub fn ipc_sender<A, T>(addr: A, chan_sz: Option<usize>) -> Sender<T>
+where
+    A: ToSocketAddrs,
+    T: Serialize + Send + 'static
+{
+
+    let (tx, rx) = match chan_sz {
+        Some(sz) => bounded(sz),
+        None => unbounded(),
+    };
+
+    let mut stdout = stdout().lock();
+    print!("Connecting to a receiver (10s timeout) ");
+    stdout.flush().unwrap();
+    let mut connected = false;
+    let mut retries = 0;
+    while !connected {
+        if let Ok(stream) = TcpStream::connect(&addr) {
+            stream.set_nodelay(true).unwrap();
+            println!("\nConnected!");
+            let rx = rx.clone();
+            thread::spawn(move || sender_handler(stream, rx));
+            connected = true;
+        } else {
+            retries += 1;
+            if retries == 10 {
+                break;
+            }
+            print!(".");
+            stdout.flush().unwrap();
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+    println!();
+
+    if !connected {
+        thread::spawn(move || {
+            println!("Can't connect, consuming messages to oblivion.");
+            disconnected_sender_handler(rx);
+        });
+    }
+    tx
+}
 
 fn receiver_handler<T>(mut stream: TcpStream, tx: Sender<T>)
 where
@@ -50,18 +106,6 @@ where
 }
 
 
-// Create a listener socket on the specified address that spawns a new thread to
-// forward messages from incoming connections into the output receiver.
-pub fn ipc_receiver<T>(addr: &str) -> Receiver<T>
-where
-    for <'a> T: Deserialize<'a> + Send + 'static
-{
-    let (tx, rx) = unbounded();
-    let listener = TcpListener::bind(addr).unwrap();
-    thread::spawn(move || tcp_listener(listener, tx));
-    rx
-}
-
 fn sender_handler<T: Serialize>(mut stream: TcpStream, rx: Receiver<T>) {
     let mut bytes = Vec::new();
     loop {
@@ -76,47 +120,4 @@ fn sender_handler<T: Serialize>(mut stream: TcpStream, rx: Receiver<T>) {
 
 fn disconnected_sender_handler<T: Serialize>(rx: Receiver<T>) {
     while let Ok(_) = rx.recv() {}
-}
-
-pub fn ipc_sender<T: Serialize + Send + 'static>(
-    addr: &str,
-    chan_sz: Option<usize>,
-) -> Sender<T> {
-
-    let (tx, rx) = match chan_sz {
-        Some(sz) => bounded(sz),
-        None => unbounded(),
-    };
-
-    let mut stdout = stdout().lock();
-    print!("Connecting to a receiver (10s timeout) ");
-    stdout.flush().unwrap();
-    let mut connected = false;
-    let mut retries = 0;
-    while !connected {
-        if let Ok(stream) = TcpStream::connect(&addr) {
-            stream.set_nodelay(true).unwrap();
-            println!("\nConnected!");
-            let rx = rx.clone();
-            thread::spawn(move || sender_handler(stream, rx));
-            connected = true;
-        } else {
-            retries += 1;
-            if retries == 10 {
-                break;
-            }
-            print!(".");
-            stdout.flush().unwrap();
-            thread::sleep(Duration::from_secs(1));
-        }
-    }
-    println!();
-
-    if !connected {
-        thread::spawn(move || {
-            println!("Can't connect, consuming messages to oblivion.");
-            disconnected_sender_handler(rx);
-        });
-    }
-    tx
 }

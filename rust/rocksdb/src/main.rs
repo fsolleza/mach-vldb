@@ -39,6 +39,39 @@ fn random_idx_bounds(l: usize, rng: &mut ThreadRng) -> (usize, usize) {
     bounds
 }
 
+fn do_read(db: &DB, key: u64, expected: &[u8]) {
+    let now = Instant::now();
+
+    compiler_fence(SeqCst);
+    let res = db.get_pinned(key.to_be_bytes()).unwrap().unwrap();
+    let sl: &[u8] = &*res;
+    assert_eq!(sl, *expected);
+    compiler_fence(SeqCst);
+
+    let dur = now.elapsed();
+    let log = RocksDBLog {
+        op: RocksDBOp::Read,
+        bytes: expected.len(),
+        micros: dur.as_micros() as usize,
+    };
+    println!("{:?}", log);
+}
+
+fn do_write(db: &DB, key: u64, slice: &[u8], opt: &WriteOptions) {
+    let now = Instant::now();
+    compiler_fence(SeqCst);
+    db.put_opt(key.to_be_bytes(), &slice, &opt).unwrap();
+    compiler_fence(SeqCst);
+
+    let dur =now.elapsed();
+    let log = RocksDBLog {
+        op: RocksDBOp::Write,
+        bytes: slice.len(),
+        micros: dur.as_micros() as usize,
+    };
+    println!("{:?}", log);
+}
+
 fn do_work(db: DB, read_ratio: f64, min_key: usize, max_key: usize) {
     let data = random_data(1024 * 4);
     let mut available_keys: HashMap<usize, &[u8]> = HashMap::new();
@@ -52,40 +85,14 @@ fn do_work(db: DB, read_ratio: f64, min_key: usize, max_key: usize) {
 
         if read {
             if let Some(expected) = available_keys.get(&key) {
-                let now = Instant::now();
-
-                compiler_fence(SeqCst);
-                let res = db.get_pinned(key.to_be_bytes()).unwrap().unwrap();
-                let sl: &[u8] = &*res;
-                assert_eq!(sl, *expected);
-                compiler_fence(SeqCst);
-
-                let dur = now.elapsed();
-                let log = RocksDBLog {
-                    op: RocksDBOp::Read,
-                    bytes: expected.len(),
-                    micros: dur.as_micros() as usize,
-                };
-                println!("{:?}", log);
+                do_read(&db, key, expected);
                 continue;
             }
         }
 
         let bounds = random_idx_bounds(data.len(), &mut rng);
         let slice = &data[bounds.0..bounds.1];
-        let now = Instant::now();
-
-        compiler_fence(SeqCst);
-        db.put_opt(key.to_be_bytes(), &slice, &opt).unwrap();
-        compiler_fence(SeqCst);
-
-        let dur =now.elapsed();
-        let log = RocksDBLog {
-            op: RocksDBOp::Write,
-            bytes: slice.len(),
-            micros: dur.as_micros() as usize,
-        };
-        println!("{:?}", log);
+        do_write(&db, key, slice, &opt);
         let _ = available_keys.insert(key, slice);
     }
 }
