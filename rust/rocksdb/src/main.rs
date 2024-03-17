@@ -4,9 +4,10 @@ use std::{
     sync::{ Arc, atomic::{ compiler_fence, Ordering::SeqCst } },
     collections::HashMap,
     time::Instant,
+    thread,
 };
 use rand::prelude::*;
-use common::*;
+use common::rocksdb::{RocksDBOp, RocksDBLog};
 
 type DB = Arc<DBWithThreadMode<SingleThreaded>>;
 
@@ -60,7 +61,7 @@ fn do_work(db: DB, read_ratio: f64, min_key: usize, max_key: usize) {
                 compiler_fence(SeqCst);
 
                 let dur = now.elapsed();
-                let log = RocksDBOpLog {
+                let log = RocksDBLog {
                     op: RocksDBOp::Read,
                     bytes: expected.len(),
                     micros: dur.as_micros() as usize,
@@ -79,7 +80,7 @@ fn do_work(db: DB, read_ratio: f64, min_key: usize, max_key: usize) {
         compiler_fence(SeqCst);
 
         let dur =now.elapsed();
-        let log = RocksDBOpLog {
+        let log = RocksDBLog {
             op: RocksDBOp::Write,
             bytes: slice.len(),
             micros: dur.as_micros() as usize,

@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 rocksdb = "0.22.0"
-rand = "0.8.5"
+rand = { workspace = true }
 common = { path = "../common" }
