@@ -111,7 +111,7 @@ function updateChartData(newData) {
 }
 
 function updateChart() {
-    var sources = sourcesList(document.getElementById("sourcesForm"));
+    var sources = sourcesList();
     console.log(sources);
     var request = new Request("http://localhost:3000/scatterPlot", {
         method: 'POST',
