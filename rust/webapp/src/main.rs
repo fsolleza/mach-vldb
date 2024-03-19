@@ -1,10 +1,7 @@
 #![allow(non_snake_case)]
 
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        Json,
-    },
+    extract::Json,
     response::{Html, IntoResponse},
     routing::{post, get},
     Router
@@ -12,44 +9,42 @@ use axum::{
 use std::{
     collections::HashMap,
     sync::Mutex,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
-use futures::{sink::SinkExt, stream::StreamExt};
 use rand::prelude::*;
 use serde::*;
-use lazy_static::*;
 
-lazy_static! {
-    static ref CONFIG: Mutex<Config> = {
-        let conf = Config {
-            activeSources: vec![],
-            pause: false,
-        };
-        Mutex::new(conf)
-    };
+fn dur_since_epoch() -> Duration {
+    (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)).unwrap()
 }
 
 #[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
-struct Config {
-    activeSources: Vec<String>,
-    pause: bool,
-}
-
-#[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
-struct Scatter2Req {
-    start: String,
-    end: String,
+struct ScatterRequest {
     sources: Vec<String>,
 }
 
+#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
+struct ScatterResponse {
+    data: Vec<ScatterSourceData>,
+}
+
+#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
+struct ScatterPoint {
+    x: u64,
+    y: i64,
+}
+
+#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
+struct ScatterSourceData {
+    source: String,
+    data: Vec<ScatterPoint>
+}
 
 #[tokio::main]
 async fn main() {
     let app = Router::new()
         .route("/", get(index))
-        .route("/config", post(config_handler))
-        .route("/scatter", get(scatter_handler))
-        .route("/scatter2", post(scatter2_handler));
+        .route("/scatterPlot", post(scatter_plot_handler));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -61,94 +56,65 @@ async fn index() -> Html<&'static str> {
     Html(std::include_str!("../index.html"))
 }
 
-async fn scatter2_handler(
-    msg: Json<Scatter2Req>,
+fn get_scatter_data(min_ms: u64, max_ms: u64, src: String) -> Vec<ScatterPoint> {
+
+    static LOCKED_SCATTER_DATA:
+        Mutex<Option<HashMap<String, Vec<ScatterPoint>>>> = Mutex::new(None);
+    let mut guard = LOCKED_SCATTER_DATA.lock().unwrap();
+
+    // If not initialized, initialize it
+    if guard.is_none() {
+        *guard = Some(HashMap::new());
+    }
+
+    let scatter_data: &mut HashMap<_, _> = guard.as_mut().unwrap();
+
+    let data: &mut Vec<ScatterPoint> = scatter_data
+            .entry(src)
+            .or_insert(Vec::new());
+
+    let mut rng = thread_rng();
+    let mut cutoff = 0;
+    for d in data.iter() {
+        if d.x < min_ms {
+            cutoff += 1;
+        } else {
+            break;
+        }
+    }
+    for _ in data.drain(0..cutoff) {}
+
+    let (src_last_millis, mut src_last_value) = match data.last() {
+        Some(point) => (point.x, point.y),
+        None => (min_ms, 0),
+    };
+
+    for millis in src_last_millis..max_ms {
+        src_last_value += rng.gen_range(-5..5);
+        if src_last_value < 0 {
+            src_last_value = 0;
+        }
+        data.push(ScatterPoint { x: millis, y: src_last_value });
+    }
+    data.clone()
+}
+
+async fn scatter_plot_handler(
+    msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
+
     let Json(req) = msg;
-    println!("Set config {:?}", req);
-    Json(())
-}
+    println!("Request: {:?}", req);
 
+    let now = dur_since_epoch();
+    let max_ms = now.as_secs() * 1000;
+    let min_ms = (now.as_secs() - 300) * 1000;
 
-async fn config_handler(
-    msg: Json<Config>,
-) -> impl IntoResponse {
-    let Json(config) = msg;
-    *CONFIG.lock().unwrap() = config.clone();
-    println!("Set config {:?}", config);
-    Json(())
-}
-
-async fn scatter_handler(
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| scatter_stream(socket))
-}
-
-fn try_update_config(conf: &mut Config) -> Result<(), ()> {
-    if let Ok(c) = CONFIG.try_lock() {
-        if &*c != conf {
-            *conf = c.clone();
-        }
-        return Ok(());
-    }
-    Err(())
-}
-
-struct DummyGenerator {
-    val: i32,
-}
-
-impl DummyGenerator {
-    fn new(val: i32) -> Self {
-        DummyGenerator {
-            val,
-        }
+    let mut response = Vec::new();
+    for source in req.sources {
+        let data = get_scatter_data(min_ms, max_ms, source.clone());
+        response.push(ScatterSourceData { source, data });
     }
 
-    fn next_value(&mut self, rng: &mut ThreadRng) -> i32 {
-        self.val += rng.gen_range(-5..5);
-        if self.val < 0 {
-            self.val = 0;
-        }
-        self.val
-    }
+    Json(ScatterResponse { data: response })
 }
-
-async fn scatter_stream(stream: WebSocket) {
-    // Split the stream so send and receive at the same time
-    let (mut sender, _) = stream.split();
-    let mut conf = CONFIG.lock().unwrap().clone();
-
-    // Some dummy sources
-    let mut sources = HashMap::new();
-    sources.insert("A", DummyGenerator::new(20));
-    sources.insert("B", DummyGenerator::new(15));
-
-    let mut data: Vec<(String, i32, u64)> = Vec::new();
-    loop {
-        let _ = try_update_config(&mut conf);
-        data.clear();
-        if !conf.pause && conf.activeSources.len() > 0 {
-            for source in &conf.activeSources {
-                let val = sources
-                    .get_mut(source.as_str())
-                    .unwrap()
-                    .next_value(&mut thread_rng());
-                let source = source.to_owned();
-                let seconds = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as u64;
-                data.push((source, val, seconds));
-            }
-
-            let s = serde_json::to_string(&data).unwrap();
-            if let Err(x) = sender.send(Message::Text(s)).await {
-                println!("error {:?}", x);
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-}
-

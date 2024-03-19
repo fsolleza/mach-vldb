@@ -1,0 +1,324 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+</head>
+<body>
+
+    <button id="sourceAToggle" type="button">SourceA</button>
+    <button id="sourceBToggle" type="button">SourceB</button>
+    <button id="pause" type="button">Pause</button>
+    <br>
+    <div id="scatter1" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+    <br>
+    <br>
+
+    <form action="" method="">
+	    <input type="checkbox" value="SourceA">SourceA
+	    <input type="checkbox" value="SourceB">SourceB
+        <br><br>
+
+        Timestamp of oldest data point.
+        <br>
+        Leaving blank will query oldest data.
+        <br>
+	    <input type="text" id="startField" value="100">
+        <br><br>
+
+        Timestamp of newest data point.
+        <br>
+        Leaving blank will query most recent data.
+        <br>
+	    <input type="text" id="endField" value="">
+        <br><br>
+	    <input type="button" value="Get data" id="scatter2Form">
+    </form>
+    <br>
+
+    <div id="scatter2" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+
+<script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+<script>
+
+    var activeSources = new Set();
+    var pauseConfig = false;
+
+    const scatterLen = 100;
+    const sourceCount = 2;
+    const sourceABtn = document.querySelector("#sourceAToggle");
+    const sourceBBtn = document.querySelector("#sourceBToggle");
+    const pauseBtn = document.querySelector("#pause");
+
+    sourceABtn.opts = { source: "A" };
+    sourceBBtn.opts = { source: "B" };
+
+    /* Scatter plot */
+    const scatterWebSocket = new WebSocket("ws://localhost:3000/scatter");
+    var scatterIdx = 100;
+    var scatterXmin = 0;
+    var scatterXmax = 100;
+
+    var scatter = new CanvasJS.Chart("scatter1", {
+        animationEnabled: true,
+        title:{
+            text: "High Level Timeline"
+        },
+        axisX: {
+            title:"Timestamp (Seconds since epoch)"
+        },
+        axisY:{
+            title: "Response Time (in ms)",
+            includeZero: true,
+            minimum: 0,
+            maximum: 40
+        },
+        legend:{
+            horizontalAlign: "left",
+            verticalAlign: "top"
+        },
+        toolTip: {
+            shared: true
+        },
+        data: [],
+    });
+
+    /* sources: [init, A, B...] */
+    scatter.options.data.push({ type: "scatter",
+                                name: " ",
+                                showInLegend: true,
+                                markerType: "none",
+                                dataPoints: scatterInitData() });
+    scatter.options.data.push({ type: "scatter",
+                                name: "A",
+                                showInLegend: false,
+                                markerType: "none",
+                                dataPoints: [] });
+    scatter.options.data.push({ type: "scatter",
+                                name: "B",
+                                showInLegend: false,
+                                markerType: "none",
+                                dataPoints: [] });
+
+    /* Define helper functions to be called on specific events */
+
+    function scatterAddData(msg) {
+        var dataJson = JSON.parse(msg.data);
+        console.log(dataJson);
+        var dataMap = new Map();
+        for (i = 0; i < dataJson.length; i++) {
+            var item = dataJson[i];
+            dataMap.set(item[0], { val: item[1], time: item[2] });
+        }
+
+        /*
+         * (A) For each data series in the scatter plot, check if it's active
+         * (activeSources.has(name)) and if it is, check if it's got data from
+         * the server (dataMap.get(name)).
+         *
+         * (B) If there is data, get the value and timestamp and push it into
+         * the data array.
+         *
+         * (C) Finally, adjust the data array s.t. data older than the scatter
+         * plot's minimum is removed from the array (dataPoints.slice)
+         */
+
+        var l = scatter.options.data.length;
+        for (i = 0; i < l; i++) {
+            var data = scatter.options.data[i];
+            var name = data.name;
+
+            /* (A) */
+            if (activeSources.has(name) || name === " ") {
+                var v = dataMap.get(name);
+
+                /* (B) */
+                if (v) {
+                    var val = v.val;
+                    var ts = v.time;
+                    data.dataPoints.push({x: ts, y: val});
+
+                    /* (C) */
+                    var min = scatter.axisX[0].get("minimum");
+                    var splitAt = 0;
+                    for (j = 0; j < data.dataPoints.length; j++) {
+                        if (data.dataPoints[j].x > min) {
+                            splitAt = j;
+                            break;
+                        }
+                    }
+                    var splitPoints =
+                        data.dataPoints.slice(splitAt, data.dataPoints.length);
+                    console.log(splitPoints.length);
+                    data.dataPoints = splitPoints;
+                }
+            }
+        }
+    }
+
+    function scatterShiftChart() {
+        if (!pauseConfig) {
+            console.log("rendering");
+            var m = Math.floor(Date.now() / 1000);
+            scatter.axisX[0].set("maximum", m);
+            scatter.axisX[0].set("minimum", m - scatterLen);
+            scatter.render();
+        }
+    }
+
+    function scatterActivateIdx(idx) {
+        scatter.data[idx].set("showInLegend", true);
+        scatter.data[idx].set("markerType", "circle");
+    }
+
+    function scatterActivateSrc(src) {
+        console.log("Activate ", src);
+        if (src === "A") { scatterActivateIdx(1); }
+        else if (src === "B") { scatterActivateIdx(2); }
+    }
+
+    function scatterDeactivateIdx(idx) {
+        scatter.data[idx].set("showInLegend", false);
+        scatter.data[idx].set("markerType", "none");
+        scatter.data[idx].set("dataPoints", []);
+    }
+
+    function scatterDeactivateSrc(src) {
+        console.log("Deactivate ", src);
+        if (src === "A") { scatterDeactivateIdx(1); }
+        else if (src === "B") { scatterDeactivateIdx(2); }
+    }
+
+    function scatterInitData() {
+        var data = [];
+        for (var i = 0; i < scatterLen; i++) {
+            data.push({ x: i, y: 0, markerType: "none" });
+        }
+        return data;
+    }
+
+    function sourceToggle(btn) {
+        console.log("Flipping Source", btn.opts.source, btn.opts.enabled);
+        if (activeSources.delete(btn.opts.source)) {
+            scatterDeactivateSrc(btn.opts.source);
+        } else {
+            activeSources.add(btn.opts.source);
+            scatterActivateSrc(btn.opts.source);
+        }
+        sendConfig();
+        scatter.render();
+    }
+
+    function sendConfig() {
+        var sources = []
+        for (const src of activeSources.values()) {
+            sources.push(src);
+        }
+        var j = JSON.stringify(
+            {
+                activeSources: sources,
+                pause: pauseConfig,
+            }
+        );
+        console.log(j);
+        var request = new Request("http://localhost:3000/config", {
+            method: 'POST',
+            body: j,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(res => res.json())
+            .then(res => console.log(res));
+    }
+
+    /* Define behaviors (i.e., callbacks) on events */
+    scatterWebSocket.onmessage = function(e) {
+        scatterAddData(e);
+    }
+
+    pauseBtn.addEventListener("click", function(e) {
+        pauseConfig = !pauseConfig;
+        sendConfig();
+    });
+
+    sourceABtn.addEventListener("click", function(e) {
+        sourceToggle(this);
+    });
+
+    sourceBBtn.addEventListener("click", function(e) {
+        sourceToggle(this);
+    });
+
+    setInterval(function(){ scatterShiftChart() }, 1);
+
+    /* After defining everything, we render the charts! */
+    scatter.render();
+
+</script>
+<script>
+    const scatter2Btn = document.querySelector("#scatter2Form");
+    var scatter2 = new CanvasJS.Chart("scatter2",{
+        data: [{
+            type: "scatter",
+            dataPoints : []
+        }]
+    });
+
+    function scatter2FormToJson(form) {
+        var start = 0;
+        var end = 0;
+        var sources = [];
+        var inputFields = form.getElementsByTagName('input');
+        let inputFieldsNumber = inputFields.length;
+
+        for(let i=0; i<inputFieldsNumber; i++) {
+            if (
+               inputFields[i].type == 'checkbox' &&
+               inputFields[i].checked == true
+            ) {
+                sources.push(inputFields[i].value);
+            }
+
+            else if (inputFields[i].type == 'text' &&
+                     inputFields[i].id === "startField") {
+                start = inputFields[i].value;
+            }
+            else if (inputFields[i].type == 'text' &&
+                     inputFields[i].id === "endField") {
+                end = inputFields[i].value;
+            }
+        }
+
+        return JSON.stringify(
+            {
+                start: start,
+                end: end,
+                sources: sources,
+            }
+        );
+    }
+
+    scatter2Btn.addEventListener("click", function(e) {
+        scatter2FormToJson(this.form);
+        var j = scatter2FormToJson(this.form);
+        console.log(j);
+        var request = new Request("http://localhost:3000/scatter2", {
+            method: 'POST',
+            body: j,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(res => res.json())
+            .then(res => console.log(res));
+    });
+
+    document.getElementById('startField').value = Math.floor((Date.now() / 1000)) - 100;
+    document.getElementById('endField').value = Math.floor((Date.now() / 1000));
+    scatter2.render();
+</script>
+</body>
+</html>
