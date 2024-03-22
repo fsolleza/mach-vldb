@@ -1,0 +1,3 @@
+[submodule "rust/mach-lib"]
+	path = rust/mach-lib
+	url = git@github.com:fsolleza/mach-lib.git

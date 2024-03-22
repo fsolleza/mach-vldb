@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [ "common", "workload", "webapp", "sched_switch"]
+members = [ "common", "workload", "webapp", "sched_switch", "collector"]
 
 [workspace.lints.clippy]
 new_without_default = "allow"
