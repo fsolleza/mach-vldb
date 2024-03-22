@@ -1,4 +1,4 @@
 pub mod ipc;
-pub mod rocksdb;
+pub mod data;
 pub mod configuration;
 

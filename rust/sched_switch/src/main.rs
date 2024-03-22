@@ -11,6 +11,14 @@ use std::process;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering::SeqCst}};
 use std::mem;
 use std::slice;
+use std::thread;
+use lazy_static::*;
+
+use crossbeam::channel::{Sender, Receiver, bounded};
+use common::{
+    ipc::*,
+    data::{Sched, Record},
+};
 
 use clap::Parser;
 
@@ -19,6 +27,10 @@ mod sched_switch {
 }
 
 use sched_switch::*;
+
+lazy_static! {
+    static ref RECORD_SENDER: Sender<Sched> = init_logging();
+}
 
 fn bump_memlock_rlimit() -> Result<(), ()> {
     let rlimit = libc::rlimit {
@@ -43,11 +55,42 @@ fn init_counter() {
     }
 }
 
+fn init_logging() -> Sender<Sched> {
+    let (tx, rx) = bounded(1000000);
+    let ipc = ipc_sender("0.0.0.0:3002", None);
+    thread::spawn(move || {
+        egress(rx, ipc);
+    });
+    tx
+}
 
-fn handler(cpu: i32, _bytes: &[u8]) -> i32 {
-    //let mut event = Event::default();
-    //copy_from_bytes(&mut event, bytes);
-    //println!("cpu: {}, pid: {}, syscall: {}, timestamp: {}", cpu, event.pid, event.syscall_number, event.timestamp);
+fn egress(rx: Receiver<Sched>, ipc: Sender<Vec<Record>>) {
+    let mut batch: Vec<Record> = Vec::new();
+    while let Ok(item) = rx.recv() {
+        batch.push(Record::Sched(item));
+        if batch.len() == 256 {
+            ipc.send(batch);
+            batch = Vec::new();
+        }
+    }
+}
+
+fn copy_from_bytes(e: &mut Sched, bytes: &[u8]) {
+    let sz = mem::size_of_val(e);
+    if bytes.len() < sz {
+        panic!("too few bytes");
+    }
+    unsafe {
+        let bptr = e as *mut Sched as *mut u8;
+        slice::from_raw_parts_mut(bptr, sz).copy_from_slice(&bytes[..sz]);
+    }
+}
+
+fn handler(cpu: i32, bytes: &[u8]) -> i32 {
+    let sender = RECORD_SENDER.clone();
+    let mut event = Sched::default();
+    copy_from_bytes(&mut event, bytes);
+    sender.send(event).unwrap();
     COUNT.fetch_add(1, SeqCst);
     0
 }

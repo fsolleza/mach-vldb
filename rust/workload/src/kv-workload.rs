@@ -13,7 +13,10 @@ use std::{
 };
 use crossbeam::channel::{Sender, Receiver, bounded};
 use rand::prelude::*;
-use common::rocksdb::{KVOp, KVLog};
+use common::{
+    ipc::ipc_sender,
+    data::{micros_since_epoch, KVOp, KVLog, Record, Batch},
+};
 use dashmap::DashMap;
 use lazy_static::*;
 
@@ -70,6 +73,38 @@ fn init_counter() {
     });
 }
 
+fn set_core_affinity(cpu: usize) {
+    use core_affinity::{set_for_current, CoreId};
+    assert!(set_for_current(CoreId { id: cpu }));
+}
+
+fn random_core_affinity<const T: usize>() -> usize {
+    let mut rng = thread_rng();
+    let cpu = rng.gen::<usize>() % T;
+    set_core_affinity(cpu);
+    cpu
+}
+
+fn init_logging() -> Sender<KVLog> {
+    let (tx, rx) = bounded(1000000);
+    let ipc = ipc_sender("0.0.0.0:3002", None);
+    thread::spawn(move || {
+        egress(rx, ipc);
+    });
+    tx
+}
+
+fn egress(rx: Receiver<KVLog>, ipc: Sender<Vec<Record>>) {
+    let mut batch: Vec<Record> = Vec::new();
+    while let Ok(item) = rx.recv() {
+        batch.push(Record::KV(item));
+        if batch.len() == 256 {
+            ipc.send(batch);
+            batch = Vec::new();
+        }
+    }
+}
+
 fn setup_db(path: PathBuf) -> DB {
     let _ = std::fs::remove_dir_all(&path);
     let db = DBWithThreadMode::<SingleThreaded>::open_default(path).unwrap();
@@ -109,11 +144,6 @@ fn do_read(db: &DB, key: u64) -> Option<Vec<u8>> {
     compiler_fence(SeqCst);
 
     let dur = now.elapsed().as_nanos() as usize;
-    let log = KVLog {
-        op: KVOp::Read,
-        bytes: res.len(),
-        nanos: dur,
-    };
     READ_COUNT.fetch_add(1, SeqCst);
     READ_TIME_NS.fetch_add(dur, SeqCst);
     READ_BYTES.fetch_max(dur, SeqCst);
@@ -134,17 +164,19 @@ fn do_write(db: &DB, key: u64, slice: &[u8]) {
     compiler_fence(SeqCst);
 
     let dur = now.elapsed().as_nanos() as usize;
-    let log = KVLog {
-        op: KVOp::Write,
-        bytes: slice.len(),
-        nanos: dur,
-    };
     WRITE_COUNT.fetch_add(1, SeqCst);
     WRITE_TIME_NS.fetch_add(dur, SeqCst);
     WRITE_BYTES.fetch_max(dur, SeqCst);
 }
 
-fn do_work(db: DB, read_ratio: f64, min_key: u64, max_key: u64, out: Sender<Vec<u8>>, thread_id: usize) {
+fn do_work(
+    db: DB,
+    read_ratio: f64,
+    min_key: u64,
+    max_key: u64,
+    out: Sender<Vec<u8>>,
+    log_out: Sender<KVLog>,
+) {
     lazy_static! {
         static ref DATA: Vec<u8> = random_data(1024 * 4);
     }
@@ -152,27 +184,28 @@ fn do_work(db: DB, read_ratio: f64, min_key: u64, max_key: u64, out: Sender<Vec<
     let data: &'static [u8] = DATA.as_slice();
 
     let mut rng = thread_rng();
-    let mut current_cpu = thread_id;
-    assert!(core_affinity::set_for_current(core_affinity::CoreId { id: current_cpu }));
+    let mut cpu = random_core_affinity::<32>() as u64;
     loop {
+
         let switch_cpu: f64 = rng.gen();
         if switch_cpu < 0.3 {
-            let cpu = rng.gen::<usize>() % 32;
-            assert!(core_affinity::set_for_current(
-                core_affinity::CoreId { id: cpu }
-            ));
-            //if current_cpu == thread_id {
-            //    current_cpu += 1;
-            //} else {
-            //    current_cpu -= 1;
-            //}
+            cpu = random_core_affinity::<32>() as u64;
         }
+
         let key: u64 = rng.gen_range(min_key..max_key);
         let read: bool = rng.gen::<f64>() < read_ratio;
 
+        let now = Instant::now();
         if read {
             if let Some(vec) = do_read(&db, key) {
                 out.send(vec).unwrap();
+
+                let dur_nanos = now.elapsed().as_nanos() as u64;
+                let timestamp = micros_since_epoch();
+                let op = KVOp::Read;
+                let log = KVLog { op, dur_nanos, timestamp, cpu };
+                log_out.send(log).unwrap();
+
                 continue;
             }
         }
@@ -180,6 +213,12 @@ fn do_work(db: DB, read_ratio: f64, min_key: u64, max_key: u64, out: Sender<Vec<
         let bounds = random_idx_bounds(data.len(), &mut rng);
         let slice = &data[bounds.0..bounds.1];
         do_write(&db, key, slice);
+
+        let dur_nanos = now.elapsed().as_nanos() as u64;
+        let timestamp = micros_since_epoch();
+        let op = KVOp::Write;
+        let log = KVLog { op, dur_nanos, timestamp, cpu };
+        log_out.send(log).unwrap();
     }
 }
 
@@ -203,6 +242,7 @@ fn main() {
     let keys = 4096;
 
     let (tx, rx) = bounded(1000000);
+    let log_sink = init_logging();
     for i in 0..4 {
         let rx = rx.clone();
         thread::spawn(move || {
@@ -223,10 +263,11 @@ fn main() {
         //let db = db.clone();
         let db = dbs[i % dbs.len()].clone();
         let tx = tx.clone();
+        let log_sink = log_sink.clone();
         handles.push(thread::spawn(move || {
             let key_low = 0;
             let key_high = 4096;
-            do_work(db, read_ratio, key_low, key_high, tx, i);
+            do_work(db, read_ratio, key_low, key_high, tx, log_sink);
         }));
     }
 

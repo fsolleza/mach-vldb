@@ -8,7 +8,10 @@ edition = "2021"
 [dependencies]
 libbpf-rs = "0.21.1"
 libc = "0.2"
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true }
+crossbeam = { workspace = true }
+lazy_static = { workspace = true }
+common = { path = "../common" }
 
 [build-dependencies]
 libbpf-cargo = "0.21.1"
