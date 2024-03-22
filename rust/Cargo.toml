@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [ "common", "rocksdb", "webapp", ]
+members = [ "common", "workload", "webapp", "sched_switch"]
 
 [workspace.lints.clippy]
 new_without_default = "allow"

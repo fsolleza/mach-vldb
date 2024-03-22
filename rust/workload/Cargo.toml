@@ -1,0 +1,26 @@
+[package]
+name = "workload"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = { workspace = true }
+clap = { workspace = true }
+lazy_static = { workspace = true }
+crossbeam = { workspace = true }
+
+dashmap = "5"
+core_affinity = "0.8.1"
+rocksdb = "0.22"
+
+common = { path = "../common" }
+
+[[bin]]
+name = "kv-workload"
+path = "src/kv-workload.rs"
+
+[[bin]]
+name = "matmul-workload"
+path = "src/matmul.rs"

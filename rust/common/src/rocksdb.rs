@@ -2,19 +2,19 @@ use serde::*;
 use std::io::Write;
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-pub enum RocksDBOp {
+pub enum KVOp {
     Read,
     Write,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-pub struct RocksDBLog {
-    pub op: RocksDBOp,
+pub struct KVLog {
+    pub op: KVOp,
     pub bytes: usize,
-    pub micros: usize,
+    pub nanos: usize,
 }
 
-impl RocksDBLog {
+impl KVLog {
     pub fn serialize_into<W: Write>(&self, writer: W)
         -> Result<(), bincode::Error>
     {
