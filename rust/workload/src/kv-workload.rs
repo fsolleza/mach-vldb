@@ -87,7 +87,7 @@ fn random_core_affinity<const T: usize>() -> usize {
 
 fn init_logging() -> Sender<KVLog> {
     let (tx, rx) = bounded(1000000);
-    let ipc = ipc_sender("0.0.0.0:3002", None);
+    let ipc = ipc_sender("0.0.0.0:3001", None);
     thread::spawn(move || {
         egress(rx, ipc);
     });
@@ -98,7 +98,7 @@ fn egress(rx: Receiver<KVLog>, ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
     while let Ok(item) = rx.recv() {
         batch.push(Record::KV(item));
-        if batch.len() == 256 {
+        if batch.len() == 1024 {
             ipc.send(batch);
             batch = Vec::new();
         }

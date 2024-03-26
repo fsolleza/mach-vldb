@@ -7,6 +7,9 @@ use std::{
 use serde::*;
 use crossbeam::channel::*;
 
+pub type IpcReceiver<T> = Receiver<T>;
+pub type IpcSender<T> = Sender<T>;
+
 // Create a listener socket on the specified address that spawns a new thread to
 // forward messages from incoming connections into the output receiver.
 pub fn ipc_receiver<A, T>(addr: A) -> Receiver<T>
@@ -79,8 +82,9 @@ where
             data.resize(sz, 0u8);
             if stream.read_exact(&mut data[..sz]).is_ok() {
                 let item: T = bincode::deserialize(&data).unwrap();
-                if tx.send(item).is_err() {
+                if let Err(x) = tx.send(item) {
                     println!("Unable to send samples to receiver, exiting");
+                    println!("Error: {:?}", x.to_string());
                     done = true;
                 }
             } else {

@@ -317,6 +317,7 @@ checksum = "98cc8fbded0c607b7ba9dd60cd98df59af97e84d24e49c8557331cfc26d301ce"
 name = "collector"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "common",
  "crossbeam",
  "mach-lib",
@@ -1816,8 +1817,12 @@ name = "webapp"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bincode",
+ "common",
+ "crossbeam",
  "futures",
  "lazy_static",
+ "mach-lib",
  "rand",
  "serde",
  "serde_json",

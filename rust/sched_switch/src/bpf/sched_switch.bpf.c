@@ -3,17 +3,18 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 
+struct event {
+    uint64_t prev_pid;
+    uint64_t next_pid;
+	uint64_t cpu;
+	uint64_t timestamp;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(int));
 } pb SEC(".maps");
-
-struct event {
-    uint32_t prev_pid;
-    uint32_t next_pid;
-	uint64_t timestamp;
-};
 
 const volatile uint32_t target_pid = 0;
 

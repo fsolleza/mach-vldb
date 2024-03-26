@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+mod collector;
+
 use axum::{
     extract::Json,
     response::{Html, IntoResponse},
@@ -13,6 +15,23 @@ use std::{
 };
 use rand::prelude::*;
 use serde::*;
+use tokio::runtime;
+use std::thread;
+
+fn main() {
+    collector::init_collector();
+    let h = thread::spawn(move || {
+        let builder = runtime::Builder::new_current_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        builder.block_on(async {
+            web_server().await
+        });
+    });
+    h.join().unwrap();
+}
 
 fn dur_since_epoch() -> Duration {
     (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)).unwrap()
@@ -40,8 +59,7 @@ struct ScatterSourceData {
     data: Vec<ScatterPoint>
 }
 
-#[tokio::main]
-async fn main() {
+async fn web_server() {
     let app = Router::new()
         .route("/", get(index))
         .route("/scatterPlot", post(scatter_plot_handler));

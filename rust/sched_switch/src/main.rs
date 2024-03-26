@@ -29,7 +29,7 @@ mod sched_switch {
 use sched_switch::*;
 
 lazy_static! {
-    static ref RECORD_SENDER: Sender<Sched> = init_logging();
+    static ref RECORD_SENDER: Sender<Sched> = init_egress();
 }
 
 fn bump_memlock_rlimit() -> Result<(), ()> {
@@ -55,9 +55,9 @@ fn init_counter() {
     }
 }
 
-fn init_logging() -> Sender<Sched> {
+fn init_egress() -> Sender<Sched> {
     let (tx, rx) = bounded(1000000);
-    let ipc = ipc_sender("0.0.0.0:3002", None);
+    let ipc = ipc_sender("0.0.0.0:3001", None);
     thread::spawn(move || {
         egress(rx, ipc);
     });
@@ -66,11 +66,14 @@ fn init_logging() -> Sender<Sched> {
 
 fn egress(rx: Receiver<Sched>, ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
+    println!("Beginning egress loop");
     while let Ok(item) = rx.recv() {
         batch.push(Record::Sched(item));
-        if batch.len() == 256 {
-            ipc.send(batch);
+        if batch.len() == 1024 {
+            ipc.send(batch).unwrap();
             batch = Vec::new();
+            println!("Sending");
+            COUNT.fetch_add(1024, SeqCst);
         }
     }
 }
@@ -91,7 +94,6 @@ fn handler(cpu: i32, bytes: &[u8]) -> i32 {
     let mut event = Sched::default();
     copy_from_bytes(&mut event, bytes);
     sender.send(event).unwrap();
-    COUNT.fetch_add(1, SeqCst);
     0
 }
 
@@ -130,5 +132,6 @@ fn main() {
     let args = Args::parse();
     bump_memlock_rlimit().unwrap();
     std::thread::spawn(init_counter);
+    let _ = RECORD_SENDER.clone();
     std::thread::spawn(move || attach(args.pid)).join().unwrap();
 }
