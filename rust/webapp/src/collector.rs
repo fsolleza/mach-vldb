@@ -9,7 +9,7 @@ use std::{
     time::Duration,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst},
     },
 };
 
@@ -20,8 +20,50 @@ static VEC_COUNT: AtomicUsize = AtomicUsize::new(0);
 static VEC_DROP: AtomicUsize = AtomicUsize::new(0);
 static VEC_READER: Mutex<Option<Arc<Mutex<Vec<(u64, Record)>>>>> = Mutex::new(None);
 
-pub fn init_collector() {
+static QUERY: AtomicUsize = AtomicUsize::new(2);
 
+fn filter(data: Vec<Record>) -> Arc<[Record]> {
+    match QUERY.load(SeqCst) {
+
+        0 => {
+            let mut v = Vec::new();
+            for item in data {
+                match item {
+                    Record::HistSecond(_) => v.push(item),
+                    _ => {},
+                }
+            }
+            return v.into();
+        },
+
+        1 => {
+            let mut v = Vec::new();
+            for item in data {
+                match item {
+                    Record::HistMillisecond(_) => v.push(item),
+                    _ => {},
+                }
+            }
+            return v.into();
+        },
+
+        2 => {
+            let mut v = Vec::new();
+            for item in data {
+                match item {
+                    Record::Hist100Micros(_) => v.push(item),
+                    _ => {},
+                }
+            }
+            return v.into();
+        },
+
+        _ => { return data.into(); }
+
+    }
+}
+
+pub fn init_collector() {
     let server_rx: IpcReceiver<Vec<Record>> = ipc_receiver("localhost:3001");
     let mut sinks: Vec<(Sender<Arc<[Record]>>, &'static AtomicUsize)> = Vec::new();
 
@@ -45,10 +87,12 @@ pub fn init_collector() {
 
     loop {
         if let Ok(data) = server_rx.try_recv() {
-            let item: Arc<[Record]> = data.into();
-            for (sink, drops) in &sinks {
-                if sink.try_send(item.clone()).is_err() {
-                    drops.fetch_add(item.len(), SeqCst);
+            let item = filter(data);
+            if item.len() > 0 {
+                for (sink, drops) in &sinks {
+                    if sink.try_send(item.clone()).is_err() {
+                        drops.fetch_add(item.len(), SeqCst);
+                    }
                 }
             }
         }
@@ -78,6 +122,67 @@ fn init_vec_sink(
         }
     }
 }
+
+fn vec_query_seconds_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
+    let guard = VEC_READER.lock().unwrap();
+    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
+
+    let mut result = Vec::new();
+    for (ts, item) in inner_guard.iter().rev() {
+        if *ts < min_ts{
+            break;
+        }
+        if *ts > max_ts {
+            continue;
+        }
+        match item {
+            Record::HistSecond(_) => result.push(*item),
+            _ => {},
+        }
+    }
+    result.into()
+}
+
+fn vec_query_millis_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
+    let guard = VEC_READER.lock().unwrap();
+    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
+
+    let mut result = Vec::new();
+    for (ts, item) in inner_guard.iter().rev() {
+        if *ts < min_ts{
+            break;
+        }
+        if *ts > max_ts {
+            continue;
+        }
+        match item {
+            Record::HistMillisecond(_) => result.push(*item),
+            _ => {},
+        }
+    }
+    result.into()
+}
+
+fn vec_query_100micros_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
+    let guard = VEC_READER.lock().unwrap();
+    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
+
+    let mut result = Vec::new();
+    for (ts, item) in inner_guard.iter().rev() {
+        if *ts < min_ts{
+            break;
+        }
+        if *ts > max_ts {
+            continue;
+        }
+        match item {
+            Record::Hist100Micros(_) => result.push(*item),
+            _ => {},
+        }
+    }
+    result.into()
+}
+
 
 //fn init_mach_sink(mut mach: Mach, rx: Receiver<Arc<[Record]>>) {
 //    let mut sl = Vec::new();

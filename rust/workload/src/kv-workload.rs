@@ -15,7 +15,7 @@ use crossbeam::channel::{Sender, Receiver, bounded};
 use rand::prelude::*;
 use common::{
     ipc::ipc_sender,
-    data::{micros_since_epoch, KVOp, KVLog, Record, Batch},
+    data::{micros_since_epoch, KVOp, KVLog, Record, Batch, Histogram},
 };
 use dashmap::DashMap;
 use lazy_static::*;
@@ -33,36 +33,39 @@ static WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static WRITE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 static WRITE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
 static OPS_MIN_RATE: AtomicUsize = AtomicUsize::new(0);
 
 fn counter2() {
         let ops = READ_COUNT.swap(0, SeqCst) + WRITE_COUNT.swap(0, SeqCst);
-        println!("{}", ops);
+        let dropped = DROPPED.swap(0, SeqCst);
+        println!("Generated {}, Dropped: {}", ops, dropped);
 }
 
-fn counter() {
-    let read_count      = READ_COUNT.swap(0, SeqCst);
-    let read_time_ns    = READ_TIME_NS.swap(0, SeqCst);
-    let read_bytes      = READ_BYTES.swap(0, SeqCst);
-
-    let write_count     = WRITE_COUNT.swap(0, SeqCst);
-    let write_time_ns   = WRITE_TIME_NS.swap(0, SeqCst);
-    let write_bytes     = WRITE_BYTES.swap(0, SeqCst);
-
-    let mut read_lat = 0;
-    if read_count > 0 {
-        read_lat = read_time_ns / read_count;
-    }
-
-    let mut write_lat = 0;
-    if write_count > 0 {
-        write_lat = write_time_ns / write_count;
-    }
-
-    println!("Reads: {} {} \t\t Writes: {} {}",
-             read_count, read_bytes,
-             write_count, write_bytes);
-}
+//fn counter() {
+//    let read_count      = READ_COUNT.swap(0, SeqCst);
+//    let read_time_ns    = READ_TIME_NS.swap(0, SeqCst);
+//    let read_bytes      = READ_BYTES.swap(0, SeqCst);
+//
+//    let write_count     = WRITE_COUNT.swap(0, SeqCst);
+//    let write_time_ns   = WRITE_TIME_NS.swap(0, SeqCst);
+//    let write_bytes     = WRITE_BYTES.swap(0, SeqCst);
+//
+//    let mut read_lat = 0;
+//    if read_count > 0 {
+//        read_lat = read_time_ns / read_count;
+//    }
+//
+//    let mut write_lat = 0;
+//    if write_count > 0 {
+//        write_lat = write_time_ns / write_count;
+//    }
+//
+//    println!("Reads: {} {} \t\t Writes: {} {}",
+//             read_count, read_bytes,
+//             write_count, write_bytes);
+//}
 
 fn init_counter() {
     thread::spawn(move || {
@@ -86,7 +89,7 @@ fn random_core_affinity<const T: usize>() -> usize {
 }
 
 fn init_logging() -> Sender<KVLog> {
-    let (tx, rx) = bounded(1000000);
+    let (tx, rx) = bounded(1024);
     let ipc = ipc_sender("0.0.0.0:3001", None);
     thread::spawn(move || {
         egress(rx, ipc);
@@ -94,12 +97,72 @@ fn init_logging() -> Sender<KVLog> {
     tx
 }
 
+fn update_hist(hist: &mut Histogram, item: &KVLog) {
+    hist.max = hist.max.max(item.dur_nanos);
+    hist.min = hist.min.min(item.dur_nanos);
+    hist.op = item.op;
+    hist.cnt += 1;
+}
+
 fn egress(rx: Receiver<KVLog>, ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
+
+    let mut read_hist: Histogram = Histogram::default();
+    let mut write_hist: Histogram = Histogram::default();
+    let mut hist_start = Instant::now();
+
+    let mut ms_read_hist: Histogram = Histogram::default();
+    let mut ms_write_hist: Histogram = Histogram::default();
+    let mut ms_hist_start = Instant::now();
+
+    let mut us_read_hist: Histogram = Histogram::default();
+    let mut us_write_hist: Histogram = Histogram::default();
+    let mut us_hist_start = Instant::now();
+
     while let Ok(item) = rx.recv() {
+
+        if item.op == KVOp::Read {
+            update_hist(&mut read_hist, &item);
+            update_hist(&mut ms_read_hist, &item);
+            update_hist(&mut us_read_hist, &item);
+        }
+
+        if item.op == KVOp::Write {
+            update_hist(&mut write_hist, &item);
+            update_hist(&mut ms_write_hist, &item);
+            update_hist(&mut us_write_hist, &item);
+        }
+
+        if us_hist_start.elapsed().as_micros() > 100 {
+            batch.push(Record::Hist100Micros(us_read_hist));
+            batch.push(Record::Hist100Micros(us_write_hist));
+            us_read_hist = Histogram::default();
+            us_write_hist = Histogram::default();
+            us_hist_start = Instant::now();
+        }
+
+        if hist_start.elapsed().as_micros() > 1_000 {
+            batch.push(Record::HistMillisecond(ms_read_hist));
+            batch.push(Record::HistMillisecond(ms_write_hist));
+            ms_read_hist = Histogram::default();
+            ms_write_hist = Histogram::default();
+            ms_hist_start = Instant::now();
+        }
+
+        if hist_start.elapsed().as_micros() > 1_000_000 {
+            batch.push(Record::HistSecond(read_hist));
+            batch.push(Record::HistSecond(write_hist));
+            read_hist = Histogram::default();
+            write_hist = Histogram::default();
+            hist_start = Instant::now();
+        }
+
         batch.push(Record::KV(item));
-        if batch.len() == 1024 {
-            ipc.send(batch);
+        if batch.len() >= 1024 {
+            let l = batch.len();
+            if ipc.try_send(batch).is_err() {
+                DROPPED.fetch_add(l, SeqCst);
+            }
             batch = Vec::new();
         }
     }

@@ -10,13 +10,13 @@ pub fn micros_since_epoch() -> u64 {
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
-pub struct LatencyHistogram {
+pub struct Histogram {
     pub max: u64,
     pub min: u64,
     pub median: u64,
     pub avg: f64,
     pub cnt: u64,
-    pub period: u64
+    pub op: KVOp,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -28,6 +28,9 @@ pub struct Batch {
 pub enum Record {
     Sched(Sched),
     KV(KVLog),
+    HistSecond(Histogram),
+    HistMillisecond(Histogram),
+    Hist100Micros(Histogram),
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -39,10 +42,16 @@ pub struct Sched {
     pub timestamp: u64,
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KVOp {
     Read,
     Write,
+}
+
+impl Default for KVOp {
+    fn default() -> Self {
+        Self::Read
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
