@@ -40,30 +40,6 @@ fn counter2() {
         println!("Generated {}, Dropped: {}", ops, dropped);
 }
 
-//fn counter() {
-//    let read_count      = READ_COUNT.swap(0, SeqCst);
-//    let read_time_ns    = READ_TIME_NS.swap(0, SeqCst);
-//    let read_bytes      = READ_BYTES.swap(0, SeqCst);
-//
-//    let write_count     = WRITE_COUNT.swap(0, SeqCst);
-//    let write_time_ns   = WRITE_TIME_NS.swap(0, SeqCst);
-//    let write_bytes     = WRITE_BYTES.swap(0, SeqCst);
-//
-//    let mut read_lat = 0;
-//    if read_count > 0 {
-//        read_lat = read_time_ns / read_count;
-//    }
-//
-//    let mut write_lat = 0;
-//    if write_count > 0 {
-//        write_lat = write_time_ns / write_count;
-//    }
-//
-//    println!("Reads: {} {} \t\t Writes: {} {}",
-//             read_count, read_bytes,
-//             write_count, write_bytes);
-//}
-
 fn init_counter() {
     thread::spawn(move || {
         loop {
@@ -101,7 +77,7 @@ fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
     let mut base_hist_timestamp = 0;
 
     while let Ok(item) = rx.recv() {
-        let b = item.timestamp - item.timestamp % 1_000_000;
+        let b = item.timestamp - item.timestamp % (1_000_000);
         if b > base_hist_timestamp {
             batch.push(Record {
                 timestamp: base_hist_timestamp,

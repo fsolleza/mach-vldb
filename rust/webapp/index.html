@@ -1,11 +1,16 @@
 <!DOCTYPE HTML>
 <html>
 <head>
-
+<style>
+a.canvasjs-chart-credit {
+    visibility: hidden;
+}
+</style>
 </head>
+
 <body>
 
-<div style="display:grid; grid-template-columns:20% 70%">
+<div style="margin: auto; display: grid; grid-template-columns: 300px 800px; width: 1100px;">
 <div>
 
 <p>
@@ -56,84 +61,113 @@ Choose the aggregate function <br>
 <p> <input id="pauseBox" type="checkbox">Pause</input></p>
 </div>
 
-<div id="scatterPlot"></div>
+<div style="width: auto; display: grid; grid-template-rows: 200px 300px 300px; row-gap: 20px">
+<div id="plotA"></div>
+<div id="plotB"></div>
+<div id="plotC"></div>
+</div>
 </div>
 
 <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
 <script>
 
-var nextRequest = [];
-var currentRequest = [];
+var dataRequests = [];
 
-var scatterPlot = new CanvasJS.Chart("scatterPlot", {
-
-	title:{
-		text: "Server Performance"
-	},
-	axisX: {
-		title:"Time",
+var plotA = new CanvasJS.Chart("plotA", {
+	axisX: [{
         interval: 1,
-        intervalType: "minute",
+        intervalType: "second",
         labelWrap: false,
         labelTextAlign: "right",
         labelAngle: -45,
-	},
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
 	axisY:{
-		title: "Response Time (in ms)",
-		includeZero: true
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd"
 	},
-	data: [
-        {
-	    	type: "scatter",
-	    	name: "init",
-	    	showInLegend: true,
-            xValueType: "dateTime",
-	    	xValueFormatString: "hh:mm TT",
-	    	dataPoints: []
-	    },
-	    {
-	    	type: "scatter",
-	    	name: "0",
-	    	showInLegend: true,
-            xValueType: "dateTime",
-	    	xValueFormatString: "hh:mm TT",
-	    	dataPoints: []
-	    }
-    ]
+    width: 800,
+	data: []
+})
+
+var plotB = new CanvasJS.Chart("plotB", {
+	axisX: [{
+        interval: 1,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -45,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+        labelFormatter: function(){
+            return " ";
+        }
+	}],
+	axisY:{
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd"
+	},
+    width: 800,
+	data: []
 });
 
-function sourcesList() {
-    var sources = [];
-    var inputFields = document.getElementsByClassName('sourceBox');
-    let inputFieldsNumber = inputFields.length;
+var plotC = new CanvasJS.Chart("plotC", {
+	axisX: [{
+        interval: 1,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -45,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+        labelFormatter: function(){
+            return " ";
+        }
+	}],
+	axisY:{
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd",
+	},
+    width: 800,
+	data: []
+});
 
-    for(let i=0; i<inputFieldsNumber; i++) {
-        if (
-           inputFields[i].type == 'checkbox' &&
-           inputFields[i].checked == true
-        ) {
-            sources.push(inputFields[i].value);
-        }
-    }
-    return JSON.stringify(
-        {
-            sources: sources,
-        }
-    );
+
+function updatePlotA(points, min_ts, max_ts) {
+    console.log("Updating plot A");
+    var newData = []
+    newData.push({
+		type: "line",
+		name: "init",
+		showInLegend: false,
+        xValueType: "dateTime",
+		xValueFormatString: "hh:mm",
+		dataPoints: points
+	})
+    plotA.options.data = newData;
+    plotA.options.axisX[0].maximum = max_ts;
+    plotA.options.axisX[0].minimum = min_ts;
 }
 
-function plotIsPaused() {
+function isPaused() {
     var pauseField = document.getElementById('pauseBox');
     return pauseField.checked;
-}
-
-function shiftChart() {
-    var max = Date.now();
-    var min = max - (1000 * 10); // in millis
-    console.log(max, min);
-    scatterPlot.axisX[0].set("maximum", max);
-    scatterPlot.axisX[0].set("minimum", min);
-    scatterPlot.options.data[0].dataPoints = [{ x: max, y: 0 }];
 }
 
 /*
@@ -144,43 +178,70 @@ function shiftChart() {
     }
 */
 
-function updateChartData(newData) {
+function updatePlotB(newData, min_ts, max_ts) {
     console.log("New data: ", newData);
     var data = newData.data;
     var newScatterData = [];
-    newScatterData.push({
-		type: "scatter",
-		name: "init",
-		showInLegend: false,
-        xValueType: "dateTime",
-		xValueFormatString: "hh:mm TT",
-		dataPoints: []
-	})
-
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
         newScatterData.push({
-	    	type: "scatter",
+	    	type: "line",
 	    	name: source,
 	    	showInLegend: true,
             xValueType: "dateTime",
-	    	xValueFormatString: "hh:mm TT",
+	    	xValueFormatString: "hh:mm",
 	    	dataPoints: sourceData
 	    })
     }
-    scatterPlot.options.data = newScatterData;
-    scatterPlot.render();
+    plotB.options.data = newScatterData;
+    plotB.options.axisX[0].maximum = max_ts;
+    plotB.options.axisX[0].minimum = min_ts;
 }
 
-function updateChart() {
-    shiftChart();
-    console.log(currentRequest);
+function updatePlotC(newData, min_ts, max_ts) {
+    console.log("New data: ", newData);
+    var data = newData.data;
+    var newScatterData = [];
+    for (i = 0; i < data.length; i++) {
+        var source = data[i].source;
+        var sourceData = data[i].data;
+        newScatterData.push({
+	    	type: "line",
+	    	name: source,
+	    	showInLegend: true,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm",
+	    	dataPoints: sourceData
+	    })
+    }
+    plotC.options.data = newScatterData;
+    plotC.options.axisX[0].maximum = max_ts;
+    plotC.options.axisX[0].minimum = min_ts;
+}
 
-    request = JSON.stringify({
-        lines: currentRequest,
-        max_ts_millis: scatterPlot.axisX[0].get("maximum"),
-        min_ts_millis: scatterPlot.axisX[0].get("minimum")
+function updatePlots() {
+    var max = Date.now();
+    var min = max - (1000 * 10); // in millis
+
+    var request = [
+        {
+            storage: "mach",
+            source: "hist",
+            field: "histcnt",
+            group: [],
+            agg: "max",
+        }
+    ];
+    for (i = 0; i < dataRequests.length; i++) {
+        request.push(dataRequests[i]);
+    }
+    dataRequests = []
+
+    var request = JSON.stringify({
+        lines: request,
+        max_ts_millis: max,
+        min_ts_millis: min,
     });
     var request = new Request("http://localhost:3000/scatterPlot", {
         method: 'POST',
@@ -189,19 +250,36 @@ function updateChart() {
             'Content-Type': 'application/json'
         })
     });
+
     fetch(request)
-        .then(res => res.json())
-        .then(res => { updateChartData(res) });
+        .then(data => data.json())
+        .then(data => {
+            var summary_stats = data.data[0].data;
+            updatePlotA(summary_stats, min, max);
+            updatePlotB(data, min, max);
+            updatePlotC(data, min, max);
+            plotA.render();
+            plotB.render();
+            plotC.render();
+        });
 }
 
-scatterPlot.render();
-setInterval(function() {
-    var paused = plotIsPaused();
-    console.log(paused);
-    if (!paused) {
-        updateChart()
+/*
+    {
+        data: [
+            { source: "SourceA", data: [ { x: int, y: int } ] },
+        ]
     }
-}, 1000);
+*/
+
+updatePlots();
+//setInterval(function() {
+//    var paused = isPaused();
+//    console.log(paused);
+//    if (!paused) {
+//        updatePlots()
+//    }
+//}, 1000);
 
 document.getElementById("addSeries").onclick = function() {
 
@@ -293,7 +371,6 @@ document.getElementById("addCollection").onclick = function() {
     fetch(request)
         .then(res => res.json());
 }
-
 
 </script>
 

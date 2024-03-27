@@ -2,7 +2,7 @@ use common::{
     ipc::{ipc_receiver, IpcReceiver},
     data::*,
 };
-//use mach_lib::{Mach, MachReader, SourcePartition};
+use mach_lib::{Mach, MachReader, SourcePartition};
 use crossbeam::channel::*;
 use std::{
     thread,
@@ -13,9 +13,12 @@ use std::{
     },
     collections::{HashMap, BTreeMap, HashSet},
 };
+use lazy_static::*;
+use dashmap::DashMap;
 
-//static MACH_COUNT: AtomicUsize = AtomicUsize::new(0);
-//static MACH_READER: Mutex<Option<MachReader>> = Mutex::new(None);
+static MACH_COUNT: AtomicUsize = AtomicUsize::new(0);
+static MACH_DROP: AtomicUsize = AtomicUsize::new(0);
+static MACH_READER: Mutex<Option<MachReader>> = Mutex::new(None);
 
 static VEC_COUNT: AtomicUsize = AtomicUsize::new(0);
 static VEC_DROP: AtomicUsize = AtomicUsize::new(0);
@@ -97,14 +100,13 @@ impl AggregateFunc {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Storage {
-    Vec,
+    //Vec,
+    Mach,
 }
 
 impl Storage {
     pub fn from_str(x: &str) -> Option<Self> {
-        if x == "mach" { return Some(Self::Vec); }
-        if x == "vec" { return Some(Self::Vec); }
-        if x == "parquet" { return Some(Self::Vec); }
+        if x == "mach" { return Some(Self::Mach); }
         return None;
     }
 }
@@ -161,7 +163,8 @@ impl Query {
         let mut result = HashMap::new();
         for (storage, sources) in storage_source.iter() {
             let mut scan_result = match storage {
-                Storage::Vec => vec_query(&sources, self.min_ts, self.max_ts),
+                //Storage::Vec => vec_query(&sources, self.min_ts, self.max_ts),
+                Storage::Mach => mach_query(&sources, self.min_ts, self.max_ts),
             };
             for (source, data) in scan_result.drain() {
                 assert!(result.insert((*storage, source), data).is_none());
@@ -297,6 +300,50 @@ fn group_by_key(
     map
 }
 
+fn mach_query(
+    sources: &[Source],
+    min_ts: u64,
+    max_ts: u64
+) -> HashMap<Source, Vec<Record>> {
+
+    let mut mach_sources = Vec::new();
+    let mut result: HashMap<Source, Vec<Record>> = HashMap::new();
+    for s in sources {
+        let source = match s {
+            Source::Hist => 0,
+            Source::KV => 1,
+            Source::Sched => 2,
+        };
+        let partition = 0;
+        mach_sources.push(SourcePartition::new(source, partition));
+        result.insert(*s, Vec::new());
+    }
+
+    let reader = MACH_READER.lock().unwrap().as_ref().unwrap().clone();
+    let snapshot = reader.snapshot(&mach_sources).snapshot();
+    let mut iterator = snapshot.iterator();
+
+
+    while let Some(entry) = iterator.next_entry() {
+        if entry.timestamp < min_ts {
+            break;
+        }
+        if entry.timestamp >= max_ts {
+            continue;
+        }
+        let source = entry.source;
+        let item: Record = bincode::deserialize_from(&entry.data[..]).unwrap();
+        let source = match source {
+            0 => Source::Hist,
+            1 => Source::KV,
+            2 => Source::Sched,
+            _ => panic!("Unhandled source in Mach"),
+        };
+        result.get_mut(&source).unwrap().push(item);
+    }
+    result
+}
+
 fn vec_query(
     sources: &[Source],
     min_ts: u64,
@@ -344,47 +391,6 @@ fn vec_query(
     map
 }
 
-//    let guard = VEC_READER.lock().unwrap();
-//    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
-//
-//    let mut map = HashMap::new();
-//    for source in sources {
-//        map.insert(*source, Vec::new());
-//    }
-//
-//    for (ts, item) in inner_guard.iter().rev() {
-//        if *ts < min_ts{
-//            break;
-//        }
-//        if *ts > max_ts {
-//            continue;
-//        }
-//        for source in sources {
-//            match (source, item.data) {
-//
-//                (Source::Hist, Data::Hist(_)) => {
-//                    map.get_mut(&Source::Hist).unwrap().push(*item);
-//                    break;
-//                },
-//
-//                (Source::KV, Data::KV(_)) => {
-//                    map.get_mut(&Source::KV).unwrap().push(*item);
-//                    break;
-//                },
-//
-//                (Source::Sched, Data::Sched(_)) => {
-//                    map.get_mut(&Source::Sched).unwrap().push(*item);
-//                    break;
-//                },
-//
-//                _ => {},
-//            }
-//        }
-//    }
-//    map
-//}
-
-
 fn filter(data: Vec<Record>) -> Arc<[Record]> {
     let mut v = Vec::new();
 
@@ -412,23 +418,23 @@ pub fn init_collector() {
     let server_rx: IpcReceiver<Vec<Record>> = ipc_receiver("localhost:3001");
     let mut sinks: Vec<(Sender<Arc<[Record]>>, &'static AtomicUsize)> = Vec::new();
 
-    //let mut mach = Mach::new("/nvme/data/tmp/vldb".into(), true, Duration::from_secs(1));
-    //let mach_reader = mach.reader();
-    //let (mach_tx, mach_rx) = bounded(1028);
-    //thread::spawn(move || {
-    //    init_mach_sink(mach, mach_rx);
-    //});
-    //*MACH_READER.lock().unwrap() = Some(mach_reader);
-    //sinks.push(mach_tx);
-
-    let vec = Arc::new(Mutex::new(Vec::new()));
-    let (vec_tx, vec_rx) = bounded(1028);
-    let v = vec.clone();
+    let mut mach = Mach::new("/nvme/data/tmp/vldb".into(), true, Duration::from_secs(1));
+    let mach_reader = mach.reader();
+    let (mach_tx, mach_rx) = bounded(1028);
     thread::spawn(move || {
-        init_vec_sink(v, vec_rx);
+        init_mach_sink(mach, mach_rx);
     });
-    sinks.push((vec_tx, &VEC_DROP));
-    *VEC_READER.lock().unwrap() = Some(vec.clone());
+    *MACH_READER.lock().unwrap() = Some(mach_reader);
+    sinks.push((mach_tx, &MACH_DROP));
+
+    //let vec = Arc::new(Mutex::new(Vec::new()));
+    //let (vec_tx, vec_rx) = bounded(1028);
+    //let v = vec.clone();
+    //thread::spawn(move || {
+    //    init_vec_sink(v, vec_rx);
+    //});
+    //sinks.push((vec_tx, &VEC_DROP));
+    //*VEC_READER.lock().unwrap() = Some(vec.clone());
 
     loop {
         if let Ok(data) = server_rx.try_recv() {
@@ -468,125 +474,39 @@ fn init_vec_sink(
     }
 }
 
-//pub fn vec_query_sources(min_ts: u64, max_ts: u64) -> HashMap<u64, Vec<Record>> {
-//    let guard = VEC_READER.lock().unwrap();
-//    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
-//
-//    let source_hist_second = SOURCE_HIST_SECOND.load(SeqCst);
-//    let source_hist_millis = SOURCE_HIST_MILLIS.load(SeqCst);
-//    let source_hist_micros = SOURCE_HIST_MICROS.load(SeqCst);
-//
-//    let mut map = HashMap::new();
-//    for (ts, item) in inner_guard.iter().rev() {
-//        if *ts < min_ts{
-//            break;
-//        }
-//        if *ts > max_ts {
-//            continue;
-//        }
-//        match item {
-//            Record::HistSecond(_) => {
-//                if source_hist_second {
-//                    map.entry(0).or_insert_with(Vec::new).push(*item);
-//                }
-//            },
-//            Record::HistMillisecond(_) => {
-//                if source_hist_millis {
-//                    map.entry(1).or_insert_with(Vec::new).push(*item);
-//                }
-//            },
-//            _ => {}
-//        }
-//    }
-//    map
-//}
+fn init_mach_sink(mut mach: Mach, rx: Receiver<Arc<[Record]>>) {
+    let mut sl = Vec::new();
+    thread::spawn(move || {
+        loop {
+            let count = MACH_COUNT.swap(0, SeqCst);
+            let drop = MACH_COUNT.swap(0, SeqCst);
+            println!("Mach Count {}\t Drop {}", count, drop);
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
 
-//fn vec_query_seconds_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
-//    let guard = VEC_READER.lock().unwrap();
-//    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
-//
-//    let mut result = Vec::new();
-//    for (ts, item) in inner_guard.iter().rev() {
-//        match item {
-//            Record::HistSecond(_) => result.push(*item),
-//            _ => {},
-//        }
-//    }
-//    result.into()
-//}
-//
-//fn vec_query_millis_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
-//    let guard = VEC_READER.lock().unwrap();
-//    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
-//
-//    let mut result = Vec::new();
-//    for (ts, item) in inner_guard.iter().rev() {
-//        if *ts < min_ts{
-//            break;
-//        }
-//        if *ts > max_ts {
-//            continue;
-//        }
-//        match item {
-//            Record::HistMillisecond(_) => result.push(*item),
-//            _ => {},
-//        }
-//    }
-//    result.into()
-//}
-//
-//fn vec_query_100micros_histogram(min_ts: u64, max_ts: u64) -> Arc<[Record]> {
-//    let guard = VEC_READER.lock().unwrap();
-//    let inner_guard = guard.as_ref().unwrap().lock().unwrap();
-//
-//    let mut result = Vec::new();
-//    for (ts, item) in inner_guard.iter().rev() {
-//        if *ts < min_ts{
-//            break;
-//        }
-//        if *ts > max_ts {
-//            continue;
-//        }
-//        match item {
-//            Record::Hist100Micros(_) => result.push(*item),
-//            _ => {},
-//        }
-//    }
-//    result.into()
-//}
+    loop {
+        if let Ok(data) = rx.try_recv() {
+            let now = micros_since_epoch();
 
+            let mut source = 0;
+            let mut partition = 0;
 
-//fn init_mach_sink(mut mach: Mach, rx: Receiver<Arc<[Record]>>) {
-//    let mut sl = Vec::new();
-//    thread::spawn(move || {
-//        loop {
-//            let count = MACH_COUNT.swap(0, SeqCst);
-//            println!("Mach Count {}", count);
-//            thread::sleep(Duration::from_secs(1));
-//        }
-//    });
-//
-//    loop {
-//        if let Ok(data) = rx.try_recv() {
-//            let now = micros_since_epoch();
-//
-//            let mut source = 0;
-//            let mut partition = 0;
-//
-//            for item in data.iter() {
-//                match item {
-//                    Record::Sched(_) => source = 0,
-//                    Record::KV(_) => source = 1,
-//                }
-//                bincode::serialize_into(&mut sl, &item).unwrap();
-//                mach.push(
-//                    SourcePartition::new(source, partition),
-//                    now,
-//                    sl.as_slice(),
-//                    );
-//                sl.clear();
-//            }
-//            MACH_COUNT.fetch_add(data.len(), SeqCst);
-//        }
-//    }
-//}
+            for item in data.iter() {
+                match item.data {
+                    Data::Hist(_) => source = 0,
+                    Data::KV(_) => source = 1,
+                    Data::Sched(_) => source = 2,
+                }
+                bincode::serialize_into(&mut sl, &item).unwrap();
+                mach.push(
+                    SourcePartition::new(source, partition),
+                    now,
+                    sl.as_slice(),
+                    );
+                sl.clear();
+            }
+            MACH_COUNT.fetch_add(data.len(), SeqCst);
+        }
+    }
+}

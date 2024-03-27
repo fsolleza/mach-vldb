@@ -18,7 +18,7 @@ use rand::prelude::*;
 use serde::*;
 use tokio::runtime;
 use common::data::{Record, micros_since_epoch};
-
+use lazy_static::*;
 
 fn main() {
     let h = thread::spawn(move || {
@@ -50,6 +50,10 @@ impl ScatterRequest {
             min_ts: self.min_ts_millis * 1000,
             max_ts: self.max_ts_millis * 1000,
         }
+    }
+
+    fn is_repeat(&self, other: &Self) -> bool {
+        self.lines == other.lines
     }
 }
 
@@ -93,7 +97,7 @@ struct ScatterSeries {
     data: Vec<ScatterPoint>
 }
 
-#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
+#[derive(PartialEq, Eq, Serialize, Debug, Clone, Copy)]
 struct ScatterPoint {
     x: u64,
     y: u64,
@@ -145,13 +149,34 @@ async fn scatter_plot_handler(
     msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
 
+    lazy_static! {
+        static ref CACHE:
+            Mutex<Option<(ScatterRequest, ScatterResponse)>> =
+            Mutex::new(None);
+    }
+
     let now = Instant::now();
 
     let Json(req) = msg;
-    let query = req.to_query();
 
+    let mut cache_guard = CACHE.lock().unwrap();
+    let mut adjusted_req = req.clone();
+    let mut repeat = false;
+    let mut min_ts_millis = req.min_ts_millis;
+    if let Some(x) = cache_guard.as_mut() {
+        if req.is_repeat(&x.0) {
+            repeat = true;
+            adjusted_req.min_ts_millis = x.0.max_ts_millis + 1;
+            println!(
+                "This is a repeat, queries for timestamp {} {}",
+                adjusted_req.min_ts_millis,
+                adjusted_req.max_ts_millis
+            );
+        }
+    }
+
+    let query = adjusted_req.to_query();
     let result = query.execute();
-
     let mut series = Vec::new();
     for i in 0..query.series.len() {
         let q = &query.series[i];
@@ -172,7 +197,43 @@ async fn scatter_plot_handler(
         }
     }
 
-    println!("Elapsed: {:?}", now.elapsed());
+    // merge the results with the cache
+    if let Some(x) = cache_guard.as_mut() {
+        if repeat {
+            println!("Merging");
+            for i in 0..series.len() {
+                let s = &mut series[i];
 
-    Json(ScatterResponse { data: series })
+                let mut j = usize::MAX;
+                for (idx, cached) in x.1.data.iter().enumerate() {
+                    if cached.source == s.source {
+                        j = idx;
+                        break;
+                    }
+                }
+                if j == usize::MAX {
+                    break;
+                }
+                let cached = &mut x.1.data[j];
+                assert_eq!(s.source, cached.source);
+
+                let last_ts = s.data[s.data.len() - 1].x;
+                for c in cached.data.iter() {
+                    if c.x >= last_ts {
+                        continue;
+                    }
+                    if c.x < min_ts_millis {
+                        break;
+                    }
+                    s.data.push(*c);
+                }
+            }
+        }
+    }
+
+    println!("Elapsed: {:?}", now.elapsed());
+    let response = ScatterResponse { data: series };
+    *cache_guard = Some((req, response.clone()));
+
+    Json(response)
 }

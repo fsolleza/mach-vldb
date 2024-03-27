@@ -48,7 +48,7 @@ fn main() {
     let mut handles = Vec::new();
     for i in 0..THREADS {
         let h = thread::spawn(move || {
-            assert!(core_affinity::set_for_current(core_affinity::CoreId { id: 6 }));
+            assert!(core_affinity::set_for_current(core_affinity::CoreId { id: 1 }));
             let a: Matrix<N> = Matrix::random();
             let b: Matrix<N> = Matrix::random();
             let mut print_a = true;
