@@ -2,12 +2,10 @@ use rocksdb::{ DBWithThreadMode, SingleThreaded, WriteOptions };
 use std::{
     path::PathBuf,
     sync::{
-        Mutex,
         Arc,
         atomic::{ compiler_fence, AtomicUsize, Ordering::SeqCst },
         //mpsc::{SyncSender, Receiver, sync_channel}
     },
-    collections::HashMap,
     time::{ Duration, Instant },
     thread,
 };
@@ -15,9 +13,8 @@ use crossbeam::channel::{Sender, Receiver, bounded};
 use rand::prelude::*;
 use common::{
     ipc::ipc_sender,
-    data::{micros_since_epoch, KVOp, KVLog, Record, Batch, Histogram},
+    data::*,
 };
-use dashmap::DashMap;
 use lazy_static::*;
 
 type DB = Arc<DBWithThreadMode<SingleThreaded>>;
@@ -35,7 +32,7 @@ static WRITE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 
-static OPS_MIN_RATE: AtomicUsize = AtomicUsize::new(0);
+//static OPS_MIN_RATE: AtomicUsize = AtomicUsize::new(0);
 
 fn counter2() {
         let ops = READ_COUNT.swap(0, SeqCst) + WRITE_COUNT.swap(0, SeqCst);
@@ -88,7 +85,7 @@ fn random_core_affinity<const T: usize>() -> usize {
     cpu
 }
 
-fn init_logging() -> Sender<KVLog> {
+fn init_logging() -> Sender<Record> {
     let (tx, rx) = bounded(1024);
     let ipc = ipc_sender("0.0.0.0:3001", None);
     thread::spawn(move || {
@@ -97,67 +94,27 @@ fn init_logging() -> Sender<KVLog> {
     tx
 }
 
-fn update_hist(hist: &mut Histogram, item: &KVLog) {
-    hist.max = hist.max.max(item.dur_nanos);
-    hist.min = hist.min.min(item.dur_nanos);
-    hist.op = item.op;
-    hist.cnt += 1;
-}
-
-fn egress(rx: Receiver<KVLog>, ipc: Sender<Vec<Record>>) {
+fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
 
-    let mut read_hist: Histogram = Histogram::default();
-    let mut write_hist: Histogram = Histogram::default();
-    let mut hist_start = Instant::now();
-
-    let mut ms_read_hist: Histogram = Histogram::default();
-    let mut ms_write_hist: Histogram = Histogram::default();
-    let mut ms_hist_start = Instant::now();
-
-    let mut us_read_hist: Histogram = Histogram::default();
-    let mut us_write_hist: Histogram = Histogram::default();
-    let mut us_hist_start = Instant::now();
+    let mut hist: Histogram = Histogram::default();
+    let mut base_hist_timestamp = 0;
 
     while let Ok(item) = rx.recv() {
-
-        if item.op == KVOp::Read {
-            update_hist(&mut read_hist, &item);
-            update_hist(&mut ms_read_hist, &item);
-            update_hist(&mut us_read_hist, &item);
+        let b = item.timestamp - item.timestamp % 1_000_000;
+        if b > base_hist_timestamp {
+            batch.push(Record {
+                timestamp: base_hist_timestamp,
+                data: Data::Hist(hist),
+            });
+            hist = Histogram::default();
+            base_hist_timestamp = b;
         }
 
-        if item.op == KVOp::Write {
-            update_hist(&mut write_hist, &item);
-            update_hist(&mut ms_write_hist, &item);
-            update_hist(&mut us_write_hist, &item);
-        }
+        hist.max = hist.max.max(item.data.kv_log().unwrap().dur_nanos);
+        hist.cnt += 1;
 
-        if us_hist_start.elapsed().as_micros() > 100 {
-            batch.push(Record::Hist100Micros(us_read_hist));
-            batch.push(Record::Hist100Micros(us_write_hist));
-            us_read_hist = Histogram::default();
-            us_write_hist = Histogram::default();
-            us_hist_start = Instant::now();
-        }
-
-        if hist_start.elapsed().as_micros() > 1_000 {
-            batch.push(Record::HistMillisecond(ms_read_hist));
-            batch.push(Record::HistMillisecond(ms_write_hist));
-            ms_read_hist = Histogram::default();
-            ms_write_hist = Histogram::default();
-            ms_hist_start = Instant::now();
-        }
-
-        if hist_start.elapsed().as_micros() > 1_000_000 {
-            batch.push(Record::HistSecond(read_hist));
-            batch.push(Record::HistSecond(write_hist));
-            read_hist = Histogram::default();
-            write_hist = Histogram::default();
-            hist_start = Instant::now();
-        }
-
-        batch.push(Record::KV(item));
+        batch.push(item);
         if batch.len() >= 1024 {
             let l = batch.len();
             if ipc.try_send(batch).is_err() {
@@ -201,9 +158,6 @@ fn do_read(db: &DB, key: u64) -> Option<Vec<u8>> {
 
     compiler_fence(SeqCst);
     let res = db.get(key.to_be_bytes()).unwrap()?;
-    //let entry = db.get(&key)?;
-    //let mut guard = entry.lock().unwrap();
-    //let res = &*guard;
     compiler_fence(SeqCst);
 
     let dur = now.elapsed().as_nanos() as usize;
@@ -219,11 +173,6 @@ fn do_write(db: &DB, key: u64, slice: &[u8]) {
     let now = Instant::now();
     compiler_fence(SeqCst);
     db.put_opt(key.to_be_bytes(), slice, &opt).unwrap();
-    //let mut entry = db.entry(key).or_insert_with(|| { Mutex::new(Vec::new()) });
-    //let mut guard = entry.lock().unwrap();
-    //guard.clear();
-    //guard.resize(slice.len(), 0);
-    //guard.copy_from_slice(slice);
     compiler_fence(SeqCst);
 
     let dur = now.elapsed().as_nanos() as usize;
@@ -237,8 +186,9 @@ fn do_work(
     read_ratio: f64,
     min_key: u64,
     max_key: u64,
+    tid: u64,
     out: Sender<Vec<u8>>,
-    log_out: Sender<KVLog>,
+    log_out: Sender<Record>,
 ) {
     lazy_static! {
         static ref DATA: Vec<u8> = random_data(1024 * 4);
@@ -248,8 +198,12 @@ fn do_work(
 
     let mut rng = thread_rng();
     let mut cpu = random_core_affinity::<32>() as u64;
-    loop {
 
+    let mut hist: Histogram = Histogram::default();
+    let mut hist_timestamp = micros_since_epoch();
+    let mut hist_start = Instant::now();
+
+    loop {
         let switch_cpu: f64 = rng.gen();
         if switch_cpu < 0.3 {
             cpu = random_core_affinity::<32>() as u64;
@@ -265,9 +219,16 @@ fn do_work(
 
                 let dur_nanos = now.elapsed().as_nanos() as u64;
                 let timestamp = micros_since_epoch();
-                let op = KVOp::Read;
-                let log = KVLog { op, dur_nanos, timestamp, cpu };
-                log_out.send(log).unwrap();
+
+                log_out.send(Record {
+                    timestamp,
+                    data: Data::KV(KVLog {
+                        op: KVOp::Read,
+                        dur_nanos,
+                        cpu,
+                        tid,
+                    }),
+                });
 
                 continue;
             }
@@ -276,24 +237,27 @@ fn do_work(
         let bounds = random_idx_bounds(data.len(), &mut rng);
         let slice = &data[bounds.0..bounds.1];
         do_write(&db, key, slice);
-
         let dur_nanos = now.elapsed().as_nanos() as u64;
         let timestamp = micros_since_epoch();
-        let op = KVOp::Write;
-        let log = KVLog { op, dur_nanos, timestamp, cpu };
-        log_out.send(log).unwrap();
+
+        log_out.send(Record {
+            timestamp,
+            data: Data::KV(KVLog {
+                op: KVOp::Write,
+                dur_nanos,
+                cpu,
+                tid,
+            }),
+        });
     }
 }
 
 fn some_sink(rx: Receiver<Vec<u8>>) {
-    let mut total = 0;
     let mut now = Instant::now();
     loop {
         if let Ok(v) = rx.try_recv() {
-            total += v.len();
             if now.elapsed().as_secs_f64() > 1. {
                 now = Instant::now();
-                total = 0;
             }
             drop(v);
         }
@@ -302,7 +266,6 @@ fn some_sink(rx: Receiver<Vec<u8>>) {
 
 fn main() {
     let read_ratio = 0.9;
-    let keys = 4096;
 
     let (tx, rx) = bounded(1000000);
     let log_sink = init_logging();
@@ -318,7 +281,7 @@ fn main() {
     let mut dbs = Vec::new();
     for i in 0..THREADS/2 {
         let db_path = format!("/nvme/data/tmp/2024-vldb-{}", i);
-        std::fs::remove_dir_all(&db_path);
+        let _ = std::fs::remove_dir_all(&db_path);
         let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
         dbs.push(db);
     }
@@ -330,7 +293,8 @@ fn main() {
         handles.push(thread::spawn(move || {
             let key_low = 0;
             let key_high = 4096;
-            do_work(db, read_ratio, key_low, key_high, tx, log_sink);
+            let tid: u64 = i as u64;
+            do_work(db, read_ratio, key_low, key_high, tid, tx, log_sink);
         }));
     }
 

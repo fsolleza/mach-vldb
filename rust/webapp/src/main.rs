@@ -11,15 +11,16 @@ use axum::{
 use std::{
     collections::HashMap,
     sync::Mutex,
-    time::{Duration, SystemTime},
+    time::{Instant, Duration, SystemTime},
+    thread,
 };
 use rand::prelude::*;
 use serde::*;
 use tokio::runtime;
-use std::thread;
+use common::data::{Record, micros_since_epoch};
+
 
 fn main() {
-    collector::init_collector();
     let h = thread::spawn(move || {
         let builder = runtime::Builder::new_current_thread()
             .worker_threads(1)
@@ -27,46 +28,93 @@ fn main() {
             .build()
             .unwrap();
         builder.block_on(async {
-            web_server().await
+            println!("HERE");
+            web_server().await;
         });
     });
+    collector::init_collector();
     h.join().unwrap();
-}
-
-fn dur_since_epoch() -> Duration {
-    (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)).unwrap()
 }
 
 #[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
 struct ScatterRequest {
-    sources: Vec<String>,
+    lines: Vec<ScatterLine>,
+    min_ts_millis: u64,
+    max_ts_millis: u64,
+}
+
+impl ScatterRequest {
+    fn to_query(&self) -> collector::Query {
+        collector::Query {
+            series: self.lines.iter().map(|x| x.to_query_series()).collect(),
+            min_ts: self.min_ts_millis * 1000,
+            max_ts: self.max_ts_millis * 1000,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
+struct ScatterLine {
+    storage: String,
+    source: String,
+    agg: String,
+    field: String,
+    group: Vec<String>,
+}
+
+impl ScatterLine {
+    fn to_query_series(&self) -> collector::QuerySeries {
+        let storage = collector::Storage::from_str(&self.storage).unwrap();
+        let source = collector::Source::from_str(&self.source).unwrap();
+        let variable = collector::Field::from_str(&self.field).unwrap();
+        let aggr = collector::AggregateFunc::from_str(&self.agg).unwrap();
+        let grouping: Vec<collector::Field> = self.group
+            .iter()
+            .map(|x| collector::Field::from_str(x).unwrap())
+            .collect();
+        collector::QuerySeries {
+            storage,
+            source,
+            grouping,
+            variable,
+            aggr,
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Serialize, Debug, Clone)]
 struct ScatterResponse {
-    data: Vec<ScatterSourceData>,
+    data: Vec<ScatterSeries>,
+}
+
+#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
+struct ScatterSeries {
+    source: String,
+    data: Vec<ScatterPoint>
 }
 
 #[derive(PartialEq, Eq, Serialize, Debug, Clone)]
 struct ScatterPoint {
     x: u64,
-    y: i64,
+    y: u64,
 }
 
-#[derive(PartialEq, Eq, Serialize, Debug, Clone)]
-struct ScatterSourceData {
-    source: String,
-    data: Vec<ScatterPoint>
+#[derive(PartialEq, Eq, Deserialize, Serialize, Debug, Clone)]
+struct SetCollectionRequest {
+    collectKv: bool,
+    collectSched: bool,
 }
 
 async fn web_server() {
     let app = Router::new()
         .route("/", get(index))
-        .route("/scatterPlot", post(scatter_plot_handler));
+        .route("/scatterPlot", post(scatter_plot_handler))
+        .route("/setCollection", post(set_collection_handler));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .unwrap();
+    println!("Listening!");
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -74,65 +122,57 @@ async fn index() -> Html<&'static str> {
     Html(std::include_str!("../index.html"))
 }
 
-fn get_scatter_data(min_ms: u64, max_ms: u64, src: String) -> Vec<ScatterPoint> {
-
-    static LOCKED_SCATTER_DATA:
-        Mutex<Option<HashMap<String, Vec<ScatterPoint>>>> = Mutex::new(None);
-    let mut guard = LOCKED_SCATTER_DATA.lock().unwrap();
-
-    // If not initialized, initialize it
-    if guard.is_none() {
-        *guard = Some(HashMap::new());
+async fn set_collection_handler(
+    msg: Json<SetCollectionRequest>,
+) -> impl IntoResponse {
+    let Json(req) = msg;
+    if req.collectKv {
+        collector::enable_kvlogs();
+    } else {
+        collector::disable_kvlogs();
     }
 
-    let scatter_data: &mut HashMap<_, _> = guard.as_mut().unwrap();
-
-    let data: &mut Vec<ScatterPoint> = scatter_data
-            .entry(src)
-            .or_insert(Vec::new());
-
-    let mut rng = thread_rng();
-    let mut cutoff = 0;
-    for d in data.iter() {
-        if d.x < min_ms {
-            cutoff += 1;
-        } else {
-            break;
-        }
+    if req.collectSched {
+        collector::enable_scheduler();
+    } else {
+        collector::disable_scheduler();
     }
-    for _ in data.drain(0..cutoff) {}
 
-    let (src_last_millis, mut src_last_value) = match data.last() {
-        Some(point) => (point.x, point.y),
-        None => (min_ms, 0),
-    };
-
-    for millis in src_last_millis..max_ms {
-        src_last_value += rng.gen_range(-5..5);
-        if src_last_value < 0 {
-            src_last_value = 0;
-        }
-        data.push(ScatterPoint { x: millis, y: src_last_value });
-    }
-    data.clone()
+    Json(())
 }
 
 async fn scatter_plot_handler(
     msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
 
+    let now = Instant::now();
+
     let Json(req) = msg;
-    println!("Request: {:?}", req);
+    let query = req.to_query();
 
-    let now = dur_since_epoch();
-    let max_ms = now.as_secs() * 1000;
-    let min_ms = (now.as_secs() - 300) * 1000;
+    let result = query.execute();
 
-    let mut response = Vec::new();
-    for source in req.sources {
-        let data = get_scatter_data(min_ms, max_ms, source.clone());
-        response.push(ScatterSourceData { source, data });
+    let mut series = Vec::new();
+    for i in 0..query.series.len() {
+        let q = &query.series[i];
+        let r = &result[i];
+        for (k, v) in r.iter() {
+            let mut group = String::new();
+            for g in k.iter() {
+                group.push_str(&format!("{}, ", g.as_string()));
+            }
+            let ser = ScatterSeries {
+                source: group,
+                data: v.iter().map(|x| ScatterPoint {
+                    x: x.x / 1_000,
+                    y: x.y
+                }).collect(),
+            };
+            series.push(ser);
+        }
     }
 
-    Json(ScatterResponse { data: response })
+    println!("Elapsed: {:?}", now.elapsed());
+
+    Json(ScatterResponse { data: series })
 }

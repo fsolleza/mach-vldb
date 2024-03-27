@@ -5,18 +5,68 @@
 </head>
 <body>
 
-<input class="sourceBox" type="checkbox" value="SourceA">SourceA</input>
-<input class="sourceBox" type="checkbox" value="SourceB">SourceB</input>
-<br>
-<input id="pauseBox" type="checkbox" value="SourceA">Pause</input>
-<br>
+<div style="display:grid; grid-template-columns:20% 70%">
+<div>
 
-<div id="scatterPlot" style="height: 370px; max-width: 920px; margin: 0px auto;"></div>
+<p>
+<input type="checkbox" id="collectKV"> Collect KV Logs
+<input type="checkbox" id="collectSched"> Collect Sched Events<br>
+<input type="button" value="Set data collection" id="addCollection">
+</p>
+
+<p>
+<input type="button" value="Add Initial Stats" id="addSummary">
+</p>
+
+<p>
+Choose storage <br>
+<input type="radio" name="addStorage" value="mach" checked=true> Mach <br>
+<input type="radio" name="addStorage" value="parquet"> Parquet
+</p>
+
+<p>
+Choose the source <br>
+<input type="radio" name="addSource" value="kv" checked=true> KV Logs <br>
+<input type="radio" name="addSource" value="sched"> Scheduler Events
+</p>
+
+<p>
+Choose field <br>
+<input type="radio" name="addField" value="kvdur" checked=true> KV Duration (ns)
+</p>
+
+<p>
+Choose the grouping <br>
+<input type="checkbox" name="addGroup" value="kvcpu" checked=true> KV CPU <br>
+<input type="checkbox" name="addGroup" value="kvtid"> KV TID <br>
+<input type="checkbox" name="addGroup" value="kvop"> KV Read / Write
+</p>
+
+<p>
+Choose the aggregate function <br>
+<input type="radio" name="addAgg" value="max" checked=true> Max <br>
+<input type="radio" name="addAgg" value="count"> Count
+</p>
+
+<p>
+<input type="button" value="Add Series" id="addSeries">
+<input type="button" value="Update Chart" id="requestSeries">
+</p>
+
+<p> <input id="pauseBox" type="checkbox">Pause</input></p>
+</div>
+
+<div id="scatterPlot"></div>
+</div>
 
 <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
 <script>
 
+var nextRequest = [];
+var currentRequest = [];
+
 var scatterPlot = new CanvasJS.Chart("scatterPlot", {
+
 	title:{
 		text: "Server Performance"
 	},
@@ -32,22 +82,24 @@ var scatterPlot = new CanvasJS.Chart("scatterPlot", {
 		title: "Response Time (in ms)",
 		includeZero: true
 	},
-	data: [{
-		type: "scatter",
-		name: "SourceA",
-		showInLegend: true,
-        xValueType: "dateTime",
-		xValueFormatString: "hh:mm TT",
-		dataPoints: []
-	},
-	{
-		type: "scatter",
-		name: "SourceB",
-		showInLegend: true,
-        xValueType: "dateTime",
-		xValueFormatString: "hh:mm TT",
-		dataPoints: []
-	}]
+	data: [
+        {
+	    	type: "scatter",
+	    	name: "init",
+	    	showInLegend: true,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm TT",
+	    	dataPoints: []
+	    },
+	    {
+	    	type: "scatter",
+	    	name: "0",
+	    	showInLegend: true,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm TT",
+	    	dataPoints: []
+	    }
+    ]
 });
 
 function sourcesList() {
@@ -77,8 +129,8 @@ function plotIsPaused() {
 
 function shiftChart() {
     var max = Date.now();
-    var min = max - (1000 * 300);
-    console.log(Date.now());
+    var min = max - (1000 * 10); // in millis
+    console.log(max, min);
     scatterPlot.axisX[0].set("maximum", max);
     scatterPlot.axisX[0].set("minimum", min);
     scatterPlot.options.data[0].dataPoints = [{ x: max, y: 0 }];
@@ -95,27 +147,44 @@ function shiftChart() {
 function updateChartData(newData) {
     console.log("New data: ", newData);
     var data = newData.data;
+    var newScatterData = [];
+    newScatterData.push({
+		type: "scatter",
+		name: "init",
+		showInLegend: false,
+        xValueType: "dateTime",
+		xValueFormatString: "hh:mm TT",
+		dataPoints: []
+	})
+
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
-        var plotData = scatterPlot.options.data
-        for (j = 0; j < plotData.length; j++) {
-            console.log("Updating ", plotData[j].name, source);
-            if (plotData[j].name === source) {
-                plotData[j].dataPoints = sourceData;
-                break;
-            }
-        }
+        newScatterData.push({
+	    	type: "scatter",
+	    	name: source,
+	    	showInLegend: true,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm TT",
+	    	dataPoints: sourceData
+	    })
     }
+    scatterPlot.options.data = newScatterData;
     scatterPlot.render();
 }
 
 function updateChart() {
-    var sources = sourcesList();
-    console.log(sources);
+    shiftChart();
+    console.log(currentRequest);
+
+    request = JSON.stringify({
+        lines: currentRequest,
+        max_ts_millis: scatterPlot.axisX[0].get("maximum"),
+        min_ts_millis: scatterPlot.axisX[0].get("minimum")
+    });
     var request = new Request("http://localhost:3000/scatterPlot", {
         method: 'POST',
-        body: sources,
+        body: request,
         headers: new Headers({
             'Content-Type': 'application/json'
         })
@@ -125,7 +194,6 @@ function updateChart() {
         .then(res => { updateChartData(res) });
 }
 
-
 scatterPlot.render();
 setInterval(function() {
     var paused = plotIsPaused();
@@ -134,6 +202,99 @@ setInterval(function() {
         updateChart()
     }
 }, 1000);
+
+document.getElementById("addSeries").onclick = function() {
+
+    var storage = "";
+    var source = "";
+    var field = "";
+    var group = [];
+    var agg = "";
+
+    var e = document.getElementsByName("addStorage");
+    for (i = 0; i < e.length; i++) {
+        if (e[i].checked) {
+            storage = e[i].value;
+        }
+    }
+
+    var e = document.getElementsByName("addSource");
+    for (i = 0; i < e.length; i++) {
+        if (e[i].checked) {
+            source = e[i].value;
+        }
+    }
+
+    var e = document.getElementsByName("addField");
+    for (i = 0; i < e.length; i++) {
+        if (e[i].checked) {
+            field = e[i].value;
+        }
+    }
+
+    var e = document.getElementsByName("addGroup");
+    for (i = 0; i < e.length; i++) {
+        if (e[i].checked) {
+            group.push(e[i].value);
+        }
+    }
+
+    var e = document.getElementsByName("addAgg");
+    for (i = 0; i < e.length; i++) {
+        if (e[i].checked) {
+            agg = e[i].value;
+        }
+    }
+
+    nextRequest.push({
+        storage: storage,
+        source: source,
+        field: field,
+        group: group,
+        agg: agg,
+    });
+}
+
+document.getElementById("addSummary").onclick = function() {
+    nextRequest.push({
+        storage: "mach",
+        source: "hist",
+        field: "histcnt",
+        group: [],
+        agg: "max",
+    });
+}
+
+document.getElementById("requestSeries").onclick = function() {
+    currentRequest = nextRequest;
+    nextRequest = [];
+}
+
+document.getElementById("addCollection").onclick = function() {
+
+    var e = document.getElementById("collectKV");
+    var collectKv = e.checked;
+
+    var e = document.getElementById("collectSched");
+    var collectSched = e.checked;
+
+    var request = JSON.stringify({
+        collectKv: collectKv,
+        collectSched: collectSched
+    })
+
+    var request = new Request("http://localhost:3000/setCollection", {
+        method: 'POST',
+        body: request,
+        headers: new Headers({
+            'Content-Type': 'application/json'
+        })
+    });
+    fetch(request)
+        .then(res => res.json());
+}
+
+
 </script>
 
 </body>

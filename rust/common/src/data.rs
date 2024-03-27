@@ -12,11 +12,7 @@ pub fn micros_since_epoch() -> u64 {
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
 pub struct Histogram {
     pub max: u64,
-    pub min: u64,
-    pub median: u64,
-    pub avg: f64,
     pub cnt: u64,
-    pub op: KVOp,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -25,12 +21,59 @@ pub struct Batch {
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-pub enum Record {
+pub struct Record {
+    pub timestamp: u64,
+    pub data: Data,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub enum Data {
     Sched(Sched),
     KV(KVLog),
-    HistSecond(Histogram),
-    HistMillisecond(Histogram),
-    Hist100Micros(Histogram),
+    Hist(Histogram),
+}
+
+impl Data {
+    pub fn is_scheduler(&self) -> bool {
+        match self {
+            Self::Sched(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_kv_log(&self) -> bool {
+        match self {
+            Self::KV(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn hist(&self) -> Option<&Histogram> {
+        match self {
+            Self::Hist(x) => Some(&x),
+            _ => None,
+        }
+    }
+    pub fn sched(&self) -> Option<&Sched> {
+        match self {
+            Self::Sched(x) => Some(&x),
+            _ => None,
+        }
+    }
+
+    pub fn kv_log(&self) -> Option<&KVLog> {
+        match self {
+            Self::KV(x) => Some(&x),
+            _ => None,
+        }
+    }
+
+    pub fn is_histogram(&self) -> bool {
+        match self {
+            Self::Hist(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -39,13 +82,12 @@ pub struct Sched {
     pub prev_pid: u64,
     pub next_pid: u64,
     pub cpu: u64,
-    pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KVOp {
-    Read,
-    Write,
+    Read = 0,
+    Write = 1,
 }
 
 impl Default for KVOp {
@@ -58,7 +100,7 @@ impl Default for KVOp {
 pub struct KVLog {
     pub op: KVOp,
     pub cpu: u64,
-    pub timestamp: u64,
+    pub tid: u64,
     pub dur_nanos: u64,
 }
 
