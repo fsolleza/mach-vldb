@@ -1,3 +1,6 @@
 [submodule "rust/mach-lib"]
 	path = rust/mach-lib
 	url = git@github.com:fsolleza/mach-lib.git
+[submodule "rust/influxdb"]
+	path = rust/influxdb
+	url = https://github.com/influxdata/influxdb.git
