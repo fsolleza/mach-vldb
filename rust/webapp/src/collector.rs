@@ -61,6 +61,7 @@ impl Field {
         if x == "kvdur" { return Some(Self::KVDur); }
         if x == "histmax" { return Some(Self::HistMax); }
         if x == "histcnt" { return Some(Self::HistCnt); }
+        println!("Can't convert field from str {}", x);
         return None;
     }
 }
@@ -152,6 +153,7 @@ pub struct Point {
 impl Query {
 
     fn get_data(&self) -> HashMap<(Storage, Source), Vec<Record>> {
+        let now = Instant::now();
         let mut storage_source = HashMap::new();
         for s in &self.series {
             storage_source
@@ -170,12 +172,14 @@ impl Query {
                 assert!(result.insert((*storage, source), data).is_none());
             }
         }
+        println!("Scan operation: {:?}", now.elapsed());
         result
     }
 
     pub fn execute(&self) -> Vec<HashMap<Vec<FieldValue>, Vec<Point>>> {
         let raw_data = self.get_data();
 
+        let now = Instant::now();
         let mut result = Vec::new();
 
         for s in self.series.iter() {
@@ -210,6 +214,7 @@ impl Query {
             }
             result.push(by_key_time);
         }
+        println!("Processing duration: {:?}", now.elapsed());
         result
     }
 }

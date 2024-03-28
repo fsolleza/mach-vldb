@@ -14,48 +14,26 @@ a.canvasjs-chart-credit {
 <div>
 
 <p>
-<input type="checkbox" id="collectKV"> Collect KV Logs
-<input type="checkbox" id="collectSched"> Collect Sched Events<br>
-<input type="button" value="Set data collection" id="addCollection">
+<input type="checkbox" id="sourceKV"> Collect KV Logs<br>
+<input type="checkbox" id="sourceSched"> Collect Sched Events<br>
+<input type="button" value="Set data collection" id="enableSource">
 </p>
 
 <p>
-<input type="button" value="Add Initial Stats" id="addSummary">
+Choose Y Axis (KV store operations) <br>
+<input type="radio" name="setYValue" id="qps"> Operations per Sec (OPS) <br>
+<input type="radio" name="setYValue" id="lat"> Max Latency per Sec (LPS)
 </p>
 
 <p>
-Choose storage <br>
-<input type="radio" name="addStorage" value="mach" checked=true> Mach <br>
-<input type="radio" name="addStorage" value="parquet"> Parquet
+Choose Y Axis groupings <br>
+<input type="checkbox" name="setYGroup" value="kvcpu"> CPU <br>
+<input type="checkbox" name="setYGroup" value="kvtid"> TID <br>
+<input type="checkbox" name="setYGroup" value="kvop"> Read / Write
 </p>
 
 <p>
-Choose the source <br>
-<input type="radio" name="addSource" value="kv" checked=true> KV Logs <br>
-<input type="radio" name="addSource" value="sched"> Scheduler Events
-</p>
-
-<p>
-Choose field <br>
-<input type="radio" name="addField" value="kvdur" checked=true> KV Duration (ns)
-</p>
-
-<p>
-Choose the grouping <br>
-<input type="checkbox" name="addGroup" value="kvcpu" checked=true> KV CPU <br>
-<input type="checkbox" name="addGroup" value="kvtid"> KV TID <br>
-<input type="checkbox" name="addGroup" value="kvop"> KV Read / Write
-</p>
-
-<p>
-Choose the aggregate function <br>
-<input type="radio" name="addAgg" value="max" checked=true> Max <br>
-<input type="radio" name="addAgg" value="count"> Count
-</p>
-
-<p>
-<input type="button" value="Add Series" id="addSeries">
-<input type="button" value="Update Chart" id="requestSeries">
+<input type="button" value="Update Chart" id="addSeries">
 </p>
 
 <p> <input id="pauseBox" type="checkbox">Pause</input></p>
@@ -85,6 +63,7 @@ var plotA = new CanvasJS.Chart("plotA", {
         lineColor: "#ddd",
 	}],
 	axisY:{
+        title: "QPS",
 		includeZero: true,
         titleFontSize: 14,
         labelFontSize: 14,
@@ -111,6 +90,7 @@ var plotB = new CanvasJS.Chart("plotB", {
         }
 	}],
 	axisY:{
+        title: "QPS",
 		includeZero: true,
         titleFontSize: 14,
         labelFontSize: 14,
@@ -137,6 +117,7 @@ var plotC = new CanvasJS.Chart("plotC", {
         }
 	}],
 	axisY:{
+        title: "QPS",
 		includeZero: true,
         titleFontSize: 14,
         labelFontSize: 14,
@@ -147,7 +128,6 @@ var plotC = new CanvasJS.Chart("plotC", {
     width: 800,
 	data: []
 });
-
 
 function updatePlotA(points, min_ts, max_ts) {
     console.log("Updating plot A");
@@ -221,9 +201,11 @@ function updatePlotC(newData, min_ts, max_ts) {
 }
 
 function updatePlots() {
-    var max = Date.now();
+    var max = Date.now() - 1000;
     var min = max - (1000 * 10); // in millis
 
+    // We make sure that the summary request is always the first item
+    // We want the PlotA to always contain the summary
     var request = [
         {
             storage: "mach",
@@ -236,7 +218,7 @@ function updatePlots() {
     for (i = 0; i < dataRequests.length; i++) {
         request.push(dataRequests[i]);
     }
-    dataRequests = []
+    console.log(request);
 
     var request = JSON.stringify({
         lines: request,
@@ -273,13 +255,13 @@ function updatePlots() {
 */
 
 updatePlots();
-//setInterval(function() {
-//    var paused = isPaused();
-//    console.log(paused);
-//    if (!paused) {
-//        updatePlots()
-//    }
-//}, 1000);
+setInterval(function() {
+    var paused = isPaused();
+    console.log(paused);
+    if (!paused) {
+        updatePlots()
+    }
+}, 1000);
 
 document.getElementById("addSeries").onclick = function() {
 
@@ -289,43 +271,29 @@ document.getElementById("addSeries").onclick = function() {
     var group = [];
     var agg = "";
 
-    var e = document.getElementsByName("addStorage");
-    for (i = 0; i < e.length; i++) {
-        if (e[i].checked) {
-            storage = e[i].value;
-        }
+    var e = document.getElementById("qps");
+    if (e.checked) {
+        source = "kv";
+        field = "kvdur";
+        agg = "count";
     }
 
-    var e = document.getElementsByName("addSource");
-    for (i = 0; i < e.length; i++) {
-        if (e[i].checked) {
-            source = e[i].value;
-        }
+    var e = document.getElementById("lat");
+    if (e.checked) {
+        source = "kv";
+        field = "kvdur";
+        agg = "max";
     }
 
-    var e = document.getElementsByName("addField");
-    for (i = 0; i < e.length; i++) {
-        if (e[i].checked) {
-            field = e[i].value;
-        }
-    }
-
-    var e = document.getElementsByName("addGroup");
+    var e = document.getElementsByName("setYGroup");
     for (i = 0; i < e.length; i++) {
         if (e[i].checked) {
             group.push(e[i].value);
         }
     }
 
-    var e = document.getElementsByName("addAgg");
-    for (i = 0; i < e.length; i++) {
-        if (e[i].checked) {
-            agg = e[i].value;
-        }
-    }
-
-    nextRequest.push({
-        storage: storage,
+    dataRequests.push({
+        storage: "mach",
         source: source,
         field: field,
         group: group,
@@ -333,27 +301,12 @@ document.getElementById("addSeries").onclick = function() {
     });
 }
 
-document.getElementById("addSummary").onclick = function() {
-    nextRequest.push({
-        storage: "mach",
-        source: "hist",
-        field: "histcnt",
-        group: [],
-        agg: "max",
-    });
-}
+document.getElementById("enableSource").onclick = function() {
 
-document.getElementById("requestSeries").onclick = function() {
-    currentRequest = nextRequest;
-    nextRequest = [];
-}
-
-document.getElementById("addCollection").onclick = function() {
-
-    var e = document.getElementById("collectKV");
+    var e = document.getElementById("sourceKV");
     var collectKv = e.checked;
 
-    var e = document.getElementById("collectSched");
+    var e = document.getElementById("sourceSched");
     var collectSched = e.checked;
 
     var request = JSON.stringify({

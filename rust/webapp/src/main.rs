@@ -10,7 +10,7 @@ use axum::{
 };
 use std::{
     collections::HashMap,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Instant, Duration, SystemTime},
     thread,
 };
@@ -19,6 +19,8 @@ use serde::*;
 use tokio::runtime;
 use common::data::{Record, micros_since_epoch};
 use lazy_static::*;
+use std::cmp::Reverse;
+use collector::*;
 
 fn main() {
     let h = thread::spawn(move || {
@@ -145,38 +147,85 @@ async fn set_collection_handler(
     Json(())
 }
 
+struct Cached {
+    request: ScatterRequest,
+    result: Arc<Vec<HashMap<Vec<FieldValue>, Vec<Point>>>>,
+}
+
+lazy_static! {
+    static ref CACHED: Mutex<Option<Cached>> = Mutex::new(None);
+}
+
 async fn scatter_plot_handler(
     msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
 
-    lazy_static! {
-        static ref CACHE:
-            Mutex<Option<(ScatterRequest, ScatterResponse)>> =
-            Mutex::new(None);
-    }
 
     let now = Instant::now();
 
     let Json(req) = msg;
 
-    let mut cache_guard = CACHE.lock().unwrap();
+    let mut cached = CACHED.lock().unwrap();
+
     let mut adjusted_req = req.clone();
-    let mut repeat = false;
-    let mut min_ts_millis = req.min_ts_millis;
-    if let Some(x) = cache_guard.as_mut() {
-        if req.is_repeat(&x.0) {
-            repeat = true;
-            adjusted_req.min_ts_millis = x.0.max_ts_millis + 1;
-            println!(
-                "This is a repeat, queries for timestamp {} {}",
-                adjusted_req.min_ts_millis,
-                adjusted_req.max_ts_millis
-            );
+    adjusted_req.min_ts_millis = adjusted_req.max_ts_millis - 3000;
+    let mut repeated = false;
+
+    // Adjust query if repeated and there's a cache
+    //if let Some(x) = cached.as_mut() {
+    //    if adjusted_req.is_repeat(&x.request) {
+    //        repeated = true;
+    //        adjusted_req.min_ts_millis = x.request.max_ts_millis - 1;
+    //    }
+    //}
+
+    let query = adjusted_req.to_query();
+    let mut result: Vec<HashMap<Vec<FieldValue>, Vec<Point>>> = query.execute();
+
+    // Merge results if repeated
+    //if repeated {
+
+    //    let req_min_ts = req.min_ts_millis * 1000;
+    //    let cached_result = cached.as_ref().unwrap().result.clone();
+
+    //    for i in 0..result.len() {
+    //        let r = &mut result[i];
+    //        let c = &cached_result[i];
+
+    //        for (key, vec) in r.iter_mut() {
+
+    //            let mut min_ts = u64::MAX;
+    //            for item in vec.iter() {
+    //                if min_ts > item.x { min_ts = item.x; }
+    //            }
+    //            let cached_vec = c.get(key).unwrap();
+    //            //println!("Result vec {:?}", vec);
+    //            for j in 0..cached_vec.len() {
+    //                let cached_val = &cached_vec[j];
+    //                if cached_val.x < min_ts && cached_val.x > req_min_ts {
+    //                    vec.push(*cached_val);
+    //                }
+    //            }
+    //        }
+    //    }
+    //}
+
+    // Ensure every vector is sorted by decreasing time
+    for map in result.iter_mut() {
+        for (k, vec) in map.iter_mut() {
+            vec.sort_by_key(|x| std::cmp::Reverse(x.x))
         }
     }
 
-    let query = adjusted_req.to_query();
-    let result = query.execute();
+    // Cache this result, replacing the cached one
+    //{
+    //    let to_cache = Cached {
+    //        result: Arc::new(result.clone()),
+    //        request: req,
+    //    };
+    //    *cached = Some(to_cache);
+    //}
+
     let mut series = Vec::new();
     for i in 0..query.series.len() {
         let q = &query.series[i];
@@ -186,54 +235,19 @@ async fn scatter_plot_handler(
             for g in k.iter() {
                 group.push_str(&format!("{}, ", g.as_string()));
             }
+            let mut data: Vec<ScatterPoint> = v.iter().map(|x| ScatterPoint {
+                x: x.x / 1_000,
+                y: x.y
+            }).collect();
+            data.sort_by_key(|k| k.x);
             let ser = ScatterSeries {
                 source: group,
-                data: v.iter().map(|x| ScatterPoint {
-                    x: x.x / 1_000,
-                    y: x.y
-                }).collect(),
+                data,
             };
             series.push(ser);
         }
     }
 
-    // merge the results with the cache
-    if let Some(x) = cache_guard.as_mut() {
-        if repeat {
-            println!("Merging");
-            for i in 0..series.len() {
-                let s = &mut series[i];
-
-                let mut j = usize::MAX;
-                for (idx, cached) in x.1.data.iter().enumerate() {
-                    if cached.source == s.source {
-                        j = idx;
-                        break;
-                    }
-                }
-                if j == usize::MAX {
-                    break;
-                }
-                let cached = &mut x.1.data[j];
-                assert_eq!(s.source, cached.source);
-
-                let last_ts = s.data[s.data.len() - 1].x;
-                for c in cached.data.iter() {
-                    if c.x >= last_ts {
-                        continue;
-                    }
-                    if c.x < min_ts_millis {
-                        break;
-                    }
-                    s.data.push(*c);
-                }
-            }
-        }
-    }
-
-    println!("Elapsed: {:?}", now.elapsed());
     let response = ScatterResponse { data: series };
-    *cache_guard = Some((req, response.clone()));
-
     Json(response)
 }

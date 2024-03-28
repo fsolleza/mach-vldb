@@ -2,3 +2,5 @@
 .*.swp
 .*.swo
 target/
+flamegraph.svg
+perf.data*
