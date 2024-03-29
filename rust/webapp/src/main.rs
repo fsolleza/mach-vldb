@@ -45,47 +45,12 @@ struct ScatterRequest {
     max_ts_millis: u64,
 }
 
-impl ScatterRequest {
-    fn to_query(&self) -> collector::Query {
-        collector::Query {
-            series: self.lines.iter().map(|x| x.to_query_series()).collect(),
-            min_ts: self.min_ts_millis * 1000,
-            max_ts: self.max_ts_millis * 1000,
-        }
-    }
-
-    fn is_repeat(&self, other: &Self) -> bool {
-        self.lines == other.lines
-    }
-}
-
 #[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
 struct ScatterLine {
-    storage: String,
     source: String,
     agg: String,
     field: String,
     group: Vec<String>,
-}
-
-impl ScatterLine {
-    fn to_query_series(&self) -> collector::QuerySeries {
-        let storage = collector::Storage::from_str(&self.storage).unwrap();
-        let source = collector::Source::from_str(&self.source).unwrap();
-        let variable = collector::Field::from_str(&self.field).unwrap();
-        let aggr = collector::AggregateFunc::from_str(&self.agg).unwrap();
-        let grouping: Vec<collector::Field> = self.group
-            .iter()
-            .map(|x| collector::Field::from_str(x).unwrap())
-            .collect();
-        collector::QuerySeries {
-            storage,
-            source,
-            grouping,
-            variable,
-            aggr,
-        }
-    }
 }
 
 #[derive(PartialEq, Eq, Serialize, Debug, Clone)]
@@ -111,10 +76,42 @@ struct SetCollectionRequest {
     collectSched: bool,
 }
 
+#[derive(PartialEq, Eq, Deserialize, Serialize, Debug, Clone)]
+struct HistogramRequest {
+    min_ts_millis: u64,
+    max_ts_millis: u64,
+}
+
+fn group_by_time_op(ts: u64, r: &Record, v: &mut (u64, Vec<FieldValue>)) {
+    let b = r.timestamp - r.timestamp % 1_000_000;
+    let log = r.data.kv_log().unwrap();
+    v.0 = b;
+    v.1.push(FieldValue::KVOp(log.op as u64));
+}
+
+fn group_by_time_cpu(ts: u64, r: &Record, v: &mut (u64, Vec<FieldValue>)) {
+    let b = r.timestamp - r.timestamp % 1_000_000;
+    let log = r.data.kv_log().unwrap();
+    v.0 = b;
+    v.1.push(FieldValue::KVCpu(log.cpu as u64));
+}
+
+
+fn aggregate_func_cnt(r: &Record, o: &mut u64) {
+    *o += 1;
+}
+
+fn source_to_int(s: &str) -> u64 {
+    if s == "hist" { return 0; }
+    if s == "kv" { return 1; }
+    panic!("Unhandled source");
+}
+
 async fn web_server() {
     let app = Router::new()
         .route("/", get(index))
         .route("/scatterPlot", post(scatter_plot_handler))
+        .route("/histogram", post(get_histogram_handler))
         .route("/setCollection", post(set_collection_handler));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
@@ -147,29 +144,85 @@ async fn set_collection_handler(
     Json(())
 }
 
-struct Cached {
-    request: ScatterRequest,
-    result: Arc<Vec<HashMap<Vec<FieldValue>, Vec<Point>>>>,
-}
-
-lazy_static! {
-    static ref CACHED: Mutex<Option<Cached>> = Mutex::new(None);
+async fn get_histogram_handler(
+    msg: Json<HistogramRequest>
+) -> impl IntoResponse {
+    let Json(req) = msg;
+    let min_ts = req.min_ts_millis * 1000;
+    let max_ts = req.max_ts_millis * 1000;
+    let mut result = get_histogram(min_ts, max_ts);
+    for r in result.iter_mut() {
+        r.x = r.x / 1000 // need to change to millis
+    }
+    Json(result)
 }
 
 async fn scatter_plot_handler(
     msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
 
-
     let now = Instant::now();
 
     let Json(req) = msg;
 
-    let mut cached = CACHED.lock().unwrap();
+    let min_ts = req.min_ts_millis * 1000;
+    let max_ts = req.max_ts_millis * 1000;
 
-    let mut adjusted_req = req.clone();
-    adjusted_req.min_ts_millis = adjusted_req.max_ts_millis - 3000;
-    let mut repeated = false;
+    let mut result = Vec::new();
+    for line in req.lines.iter() {
+        let source = source_to_int(line.source.as_str());
+        let interm = mach_query(
+            source,
+            min_ts,
+            max_ts,
+            group_by_time_cpu,
+            aggregate_func_cnt
+        );
+
+        let mut map: HashMap<Vec<FieldValue>, Vec<Point>> = HashMap::new();
+        for ((ts, group), val) in interm {
+            map.entry(group)
+                .or_insert_with(Vec::new)
+                .push(Point { x: ts, y: val });
+        }
+
+        for (g, v) in map.iter_mut() {
+            v.sort_by_key(|p| std::cmp::Reverse(p.x));
+        }
+        result.push(map);
+    }
+
+    let mut series = Vec::new();
+    for r in result { // 0..query.series.len() {
+        //let q = &query.series[i];
+        //let r = &result[i];
+        for (k, v) in r.iter() {
+            let mut group = String::new();
+            for g in k.iter() {
+                group.push_str(&format!("{}, ", g.as_string()));
+            }
+            let mut data: Vec<ScatterPoint> = v.iter().map(|x| ScatterPoint {
+                x: x.x / 1_000,
+                y: x.y
+            }).collect();
+            data.sort_by_key(|k| k.x);
+            let ser = ScatterSeries {
+                source: group,
+                data,
+            };
+            series.push(ser);
+        }
+    }
+
+    let response = ScatterResponse { data: series };
+    Json(response)
+}
+
+    //let mut cached = CACHED.lock().unwrap();
+
+    //let mut adjusted_req = req.clone();
+    //adjusted_req.min_ts_millis = adjusted_req.max_ts_millis - 3000;
+    //let mut repeated = false;
 
     // Adjust query if repeated and there's a cache
     //if let Some(x) = cached.as_mut() {
@@ -179,8 +232,8 @@ async fn scatter_plot_handler(
     //    }
     //}
 
-    let query = adjusted_req.to_query();
-    let mut result: Vec<HashMap<Vec<FieldValue>, Vec<Point>>> = query.execute();
+    //let query = adjusted_req.to_query();
+    //let mut result: Vec<HashMap<Vec<FieldValue>, Vec<Point>>> = query.execute();
 
     // Merge results if repeated
     //if repeated {
@@ -211,11 +264,11 @@ async fn scatter_plot_handler(
     //}
 
     // Ensure every vector is sorted by decreasing time
-    for map in result.iter_mut() {
-        for (k, vec) in map.iter_mut() {
-            vec.sort_by_key(|x| std::cmp::Reverse(x.x))
-        }
-    }
+    //for map in result.iter_mut() {
+    //    for (k, vec) in map.iter_mut() {
+    //        vec.sort_by_key(|x| std::cmp::Reverse(x.x))
+    //    }
+    //}
 
     // Cache this result, replacing the cached one
     //{
@@ -226,28 +279,3 @@ async fn scatter_plot_handler(
     //    *cached = Some(to_cache);
     //}
 
-    let mut series = Vec::new();
-    for i in 0..query.series.len() {
-        let q = &query.series[i];
-        let r = &result[i];
-        for (k, v) in r.iter() {
-            let mut group = String::new();
-            for g in k.iter() {
-                group.push_str(&format!("{}, ", g.as_string()));
-            }
-            let mut data: Vec<ScatterPoint> = v.iter().map(|x| ScatterPoint {
-                x: x.x / 1_000,
-                y: x.y
-            }).collect();
-            data.sort_by_key(|k| k.x);
-            let ser = ScatterSeries {
-                source: group,
-                data,
-            };
-            series.push(ser);
-        }
-    }
-
-    let response = ScatterResponse { data: series };
-    Json(response)
-}

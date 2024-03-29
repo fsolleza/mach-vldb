@@ -21,3 +21,4 @@ bincode = "1"
 
 common = { path = "../common" }
 mach-lib = { path = "../mach-lib" }
+influxdb3_client = { path = "../influxdb/influxdb3_client" }

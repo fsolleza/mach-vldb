@@ -14,6 +14,10 @@ a.canvasjs-chart-credit {
 <div>
 
 <p>
+<input type="checkbox" id="hideHist"> Hide Summary Stats<br>
+</p>
+
+<p>
 <input type="checkbox" id="sourceKV"> Collect KV Logs<br>
 <input type="checkbox" id="sourceSched"> Collect Sched Events<br>
 <input type="button" value="Set data collection" id="enableSource">
@@ -33,7 +37,7 @@ Choose Y Axis groupings <br>
 </p>
 
 <p>
-<input type="button" value="Update Chart" id="addSeries">
+<input type="button" value="Update Chart" id="updatePlots">
 </p>
 
 <p> <input id="pauseBox" type="checkbox">Pause</input></p>
@@ -50,6 +54,7 @@ Choose Y Axis groupings <br>
 <script>
 
 var dataRequests = [];
+var hideHistogram = false;
 
 var plotA = new CanvasJS.Chart("plotA", {
 	axisX: [{
@@ -129,8 +134,13 @@ var plotC = new CanvasJS.Chart("plotC", {
 	data: []
 });
 
+function isPaused() {
+    var pauseField = document.getElementById('pauseBox');
+    return pauseField.checked;
+}
+
 function updatePlotA(points, min_ts, max_ts) {
-    console.log("Updating plot A");
+    console.log("Updating plot A with points", points);
     var newData = []
     newData.push({
 		type: "line",
@@ -145,23 +155,54 @@ function updatePlotA(points, min_ts, max_ts) {
     plotA.options.axisX[0].minimum = min_ts;
 }
 
-function isPaused() {
-    var pauseField = document.getElementById('pauseBox');
-    return pauseField.checked;
+function updatePlotBHistogram(points, min_ts, max_ts, visible) {
+    if (plotB.options.data[0]) {
+        plotB.options.data[0].dataPoints = points;
+    } else {
+        var newData = []
+        newData.push({
+	    	type: "line",
+	    	name: "init",
+	    	showInLegend: false,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm",
+	    	dataPoints: points
+	    })
+        plotB.options.data = newData;
+    }
+    plotB.options.data[0].visible = visible;
+    plotB.options.axisX[0].maximum = max_ts;
+    plotB.options.axisX[0].minimum = min_ts;
 }
 
-/*
-    {
-        data: [
-            { source: "SourceA", data: [ { x: int, y: int } ] },
-        ]
+function updatePlotCHistogram(points, min_ts, max_ts, visible) {
+    if (plotC.options.data[0]) {
+        plotC.options.data[0].dataPoints = points;
+    } else {
+        var newData = []
+        newData.push({
+	    	type: "line",
+	    	name: "init",
+	    	showInLegend: false,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm",
+	    	dataPoints: points
+	    })
+        plotC.options.data = newData;
     }
-*/
+    plotC.options.data[0].visible = visible;
+    plotC.options.axisX[0].maximum = max_ts;
+    plotC.options.axisX[0].minimum = min_ts;
+}
 
 function updatePlotB(newData, min_ts, max_ts) {
     console.log("New data: ", newData);
     var data = newData.data;
+
+    // First data is always the histogram
     var newScatterData = [];
+    newScatterData.push(plotB.options.data[0]);
+
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
@@ -182,7 +223,11 @@ function updatePlotB(newData, min_ts, max_ts) {
 function updatePlotC(newData, min_ts, max_ts) {
     console.log("New data: ", newData);
     var data = newData.data;
+
+    // First data is always the histogram
     var newScatterData = [];
+    newScatterData.push(plotC.options.data[0]);
+
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
@@ -200,32 +245,17 @@ function updatePlotC(newData, min_ts, max_ts) {
     plotC.options.axisX[0].minimum = min_ts;
 }
 
-function updatePlots() {
-    var max = Date.now() - 1000;
-    var min = max - (1000 * 10); // in millis
-
-    // We make sure that the summary request is always the first item
-    // We want the PlotA to always contain the summary
-    var request = [
-        {
-            storage: "mach",
-            source: "hist",
-            field: "histcnt",
-            group: [],
-            agg: "max",
-        }
-    ];
-    for (i = 0; i < dataRequests.length; i++) {
-        request.push(dataRequests[i]);
-    }
+function updateHistogram(min_ts, max_ts, shouldRender) {
+    var request = JSON.stringify({
+        max_ts_millis: max_ts,
+        min_ts_millis: min_ts
+    });
     console.log(request);
 
-    var request = JSON.stringify({
-        lines: request,
-        max_ts_millis: max,
-        min_ts_millis: min,
-    });
-    var request = new Request("http://localhost:3000/scatterPlot", {
+    var e = document.getElementById("hideHist");
+    var visible = !e.checked;
+
+    var request = new Request("http://localhost:3000/histogram", {
         method: 'POST',
         body: request,
         headers: new Headers({
@@ -236,14 +266,50 @@ function updatePlots() {
     fetch(request)
         .then(data => data.json())
         .then(data => {
-            var summary_stats = data.data[0].data;
-            updatePlotA(summary_stats, min, max);
-            updatePlotB(data, min, max);
-            updatePlotC(data, min, max);
-            plotA.render();
-            plotB.render();
-            plotC.render();
+            console.log("Result", data);
+            updatePlotA(data, min_ts, max_ts);
+            updatePlotBHistogram(data, min_ts, max_ts, visible);
+            updatePlotCHistogram(data, min_ts, max_ts, visible);
+            if (shouldRender) {
+                plotA.render();
+                plotB.render();
+                plotC.render();
+            }
         });
+}
+
+function updatePlots() {
+    var max = Date.now() - 1000;
+    var min = max - (1000 * 10); // in millis
+
+    updateHistogram(min, max, dataRequests.length == 0);
+
+    if (dataRequests.length > 0) {
+        var request = JSON.stringify({
+            lines: dataRequests,
+            max_ts_millis: max,
+            min_ts_millis: min,
+        });
+        var request = new Request("http://localhost:3000/scatterPlot", {
+            method: 'POST',
+            body: request,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(data => data.json())
+            .then(data => {
+                console.log(data);
+                updatePlotB(data, min, max);
+                updatePlotC(data, min, max);
+                plotA.render();
+                plotB.render();
+                plotC.render();
+            });
+    }
+
 }
 
 /*
@@ -263,9 +329,8 @@ setInterval(function() {
     }
 }, 1000);
 
-document.getElementById("addSeries").onclick = function() {
+document.getElementById("updatePlots").onclick = function() {
 
-    var storage = "";
     var source = "";
     var field = "";
     var group = [];
@@ -292,8 +357,8 @@ document.getElementById("addSeries").onclick = function() {
         }
     }
 
+    dataRequsts = [];
     dataRequests.push({
-        storage: "mach",
         source: source,
         field: field,
         group: group,

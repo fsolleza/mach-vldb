@@ -9,18 +9,19 @@ use std::{
     time::{ Duration, Instant },
     thread,
 };
-use crossbeam::channel::{Sender, Receiver, bounded};
+use crossbeam::channel::{Sender, Receiver, bounded, unbounded};
 use rand::prelude::*;
 use common::{
     ipc::ipc_sender,
     data::*,
 };
+use thread_priority::*;
 use lazy_static::*;
 
 type DB = Arc<DBWithThreadMode<SingleThreaded>>;
 //type DB = Arc<DashMap<u64, Mutex<Vec<u8>>>>;
 
-const THREADS: usize = 32;
+const THREADS: usize = 1;
 
 static READ_COUNT: AtomicUsize = AtomicUsize::new(0);
 static READ_TIME_NS: AtomicUsize = AtomicUsize::new(0);
@@ -64,45 +65,48 @@ fn random_core_affinity<const T: usize>() -> usize {
     cpu
 }
 
-fn init_logging() -> Sender<Record> {
-    let (tx, rx) = bounded(1024);
-    let ipc = ipc_sender("0.0.0.0:3001", None);
-    thread::spawn(move || {
-        egress(rx, ipc);
-    });
-    tx
-}
-
-fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
-    let mut batch: Vec<Record> = Vec::new();
-
-    let mut hist: Histogram = Histogram::default();
-    let mut base_hist_timestamp = 0;
-
-    while let Ok(item) = rx.recv() {
-        let b = item.timestamp - item.timestamp % (1_000_000);
-        if b > base_hist_timestamp {
-            batch.push(Record {
-                timestamp: base_hist_timestamp,
-                data: Data::Hist(hist),
-            });
-            hist = Histogram::default();
-            base_hist_timestamp = b;
-        }
-
-        hist.max = hist.max.max(item.data.kv_log().unwrap().dur_nanos);
-        hist.cnt += 1;
-
-        batch.push(item);
-        if batch.len() >= 1024 {
-            let l = batch.len();
-            if ipc.try_send(batch).is_err() {
-                DROPPED.fetch_add(l, SeqCst);
-            }
-            batch = Vec::new();
-        }
-    }
-}
+//fn init_logging() -> Sender<Record> {
+//    let (tx, rx) = unbounded();
+//    let ipc = ipc_sender("0.0.0.0:3001", None);
+//    thread::spawn(move || {
+//        set_core_affinity(30);
+//        egress(rx, ipc);
+//    });
+//    tx
+//}
+//
+//fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
+//    let mut batch: Vec<Record> = Vec::new();
+//
+//    let mut hist: Histogram = Histogram::default();
+//    let mut base_hist_timestamp = 0;
+//
+//    loop {
+//        if let Ok(item) = rx.try_recv() {
+//            let b = item.timestamp - item.timestamp % (1_000_000);
+//            if b > base_hist_timestamp {
+//                batch.push(Record {
+//                    timestamp: base_hist_timestamp,
+//                    data: Data::Hist(hist),
+//                });
+//                hist = Histogram::default();
+//                base_hist_timestamp = b;
+//            }
+//
+//            hist.max = hist.max.max(item.data.kv_log().unwrap().dur_nanos);
+//            hist.cnt += 1;
+//
+//            batch.push(item);
+//            if batch.len() >= 1024 {
+//                let l = batch.len();
+//                if ipc.try_send(batch).is_err() {
+//                    DROPPED.fetch_add(l, SeqCst);
+//                }
+//                batch = Vec::new();
+//            }
+//        }
+//    }
+//}
 
 fn setup_db(path: PathBuf) -> DB {
     let _ = std::fs::remove_dir_all(&path);
@@ -167,26 +171,31 @@ fn do_work(
     max_key: u64,
     tid: u64,
     out: Sender<Vec<u8>>,
-    log_out: Sender<Record>,
 ) {
     lazy_static! {
         static ref DATA: Vec<u8> = random_data(1024 * 4);
     }
 
+    let log_out = ipc_sender("0.0.0.0:3010", Some(1028));
+
     let data: &'static [u8] = DATA.as_slice();
+    assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 
     let mut rng = thread_rng();
-    let mut cpu = random_core_affinity::<32>() as u64;
+    set_core_affinity(tid as usize);
+    let mut cpu = tid as u64;
 
     let mut hist: Histogram = Histogram::default();
     let mut hist_timestamp = micros_since_epoch();
     let mut hist_start = Instant::now();
+    let bounds = random_idx_bounds(data.len(), &mut rng);
 
+    let mut records = Vec::new();
     loop {
         let switch_cpu: f64 = rng.gen();
-        if switch_cpu < 0.3 {
-            cpu = random_core_affinity::<32>() as u64;
-        }
+        //if switch_cpu < 0.3 {
+        //    cpu = random_core_affinity::<12>() as u64;
+        //}
 
         let key: u64 = rng.gen_range(min_key..max_key);
         let read: bool = rng.gen::<f64>() < read_ratio;
@@ -199,7 +208,7 @@ fn do_work(
                 let dur_nanos = now.elapsed().as_nanos() as u64;
                 let timestamp = micros_since_epoch();
 
-                log_out.send(Record {
+                records.push(Record {
                     timestamp,
                     data: Data::KV(KVLog {
                         op: KVOp::Read,
@@ -208,18 +217,20 @@ fn do_work(
                         tid,
                     }),
                 });
-
+                if records.len() > 1024 {
+                    log_out.send(records).unwrap();
+                    records = Vec::new();
+                }
                 continue;
             }
         }
 
-        let bounds = random_idx_bounds(data.len(), &mut rng);
         let slice = &data[bounds.0..bounds.1];
         do_write(&db, key, slice);
         let dur_nanos = now.elapsed().as_nanos() as u64;
         let timestamp = micros_since_epoch();
 
-        log_out.send(Record {
+        records.push(Record {
             timestamp,
             data: Data::KV(KVLog {
                 op: KVOp::Write,
@@ -228,6 +239,10 @@ fn do_work(
                 tid,
             }),
         });
+        if records.len() > 1024 {
+            log_out.send(records).unwrap();
+            records = Vec::new();
+        }
     }
 }
 
@@ -243,39 +258,32 @@ fn some_sink(rx: Receiver<Vec<u8>>) {
     }
 }
 
+use clap::Parser;
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(short, long)]
+    cpu: u64,
+}
+
 fn main() {
+    let args = Args::parse();
+    let cpu = args.cpu;
     let read_ratio = 0.9;
 
-    let (tx, rx) = bounded(1000000);
-    let log_sink = init_logging();
-    for i in 0..4 {
-        let rx = rx.clone();
-        thread::spawn(move || {
-            assert!(core_affinity::set_for_current(core_affinity::CoreId { id: 60 + i }));
-            some_sink(rx)
-        });
-    }
+    let (tx, rx) = bounded(1024);
+    thread::spawn(move || {
+        some_sink(rx)
+    });
 
     let mut handles = Vec::new();
-    let mut dbs = Vec::new();
-    for i in 0..THREADS/2 {
-        let db_path = format!("/nvme/data/tmp/2024-vldb-{}", i);
-        let _ = std::fs::remove_dir_all(&db_path);
-        let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
-        dbs.push(db);
-    }
-    for i in 0..THREADS {
-        //let db = db.clone();
-        let db = dbs[i % dbs.len()].clone();
-        let tx = tx.clone();
-        let log_sink = log_sink.clone();
-        handles.push(thread::spawn(move || {
-            let key_low = 0;
-            let key_high = 4096;
-            let tid: u64 = i as u64;
-            do_work(db, read_ratio, key_low, key_high, tid, tx, log_sink);
-        }));
-    }
+    let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
+    let _ = std::fs::remove_dir_all(&db_path);
+    let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
+    handles.push(thread::spawn(move || {
+        let key_low = 0;
+        let key_high = 4096;
+        do_work(db, read_ratio, key_low, key_high, cpu, tx);
+    }));
 
     init_counter();
 

@@ -3,6 +3,7 @@ use std::{
     time::{Instant, Duration},
     thread,
 };
+use thread_priority::*;
 
 struct Matrix<const D: usize>(Box<[[f64; D]; D]>);
 
@@ -49,6 +50,7 @@ fn main() {
     for i in 0..THREADS {
         let h = thread::spawn(move || {
             assert!(core_affinity::set_for_current(core_affinity::CoreId { id: 1 }));
+            assert!(set_current_thread_priority(ThreadPriority::Max).is_ok());
             let a: Matrix<N> = Matrix::random();
             let b: Matrix<N> = Matrix::random();
             let mut print_a = true;
