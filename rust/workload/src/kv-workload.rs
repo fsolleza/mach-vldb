@@ -191,6 +191,7 @@ fn do_work(
     let bounds = random_idx_bounds(data.len(), &mut rng);
 
     let mut records = Vec::new();
+    let mut flush_counter = 0;
     loop {
         let switch_cpu: f64 = rng.gen();
         //if switch_cpu < 0.3 {
@@ -227,6 +228,11 @@ fn do_work(
 
         let slice = &data[bounds.0..bounds.1];
         do_write(&db, key, slice);
+        flush_counter += 1;
+        //if flush_counter == 4096 {
+        //    db.flush();
+        //    flush_counter = 0;
+        //}
         let dur_nanos = now.elapsed().as_nanos() as u64;
         let timestamp = micros_since_epoch();
 

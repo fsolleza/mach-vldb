@@ -12,6 +12,7 @@ a.canvasjs-chart-credit {
 
 <div style="margin: auto; display: grid; grid-template-columns: 300px 800px; width: 1100px;">
 <div>
+<div>
 
 <p>
 <input type="checkbox" id="hideHist"> Hide Summary Stats<br>
@@ -42,6 +43,9 @@ Choose Y Axis groupings <br>
 
 <p> <input id="pauseBox" type="checkbox">Pause</input></p>
 </div>
+<div id="plotD">
+</div>
+</div>
 
 <div style="width: auto; display: grid; grid-template-rows: 200px 300px 300px; row-gap: 20px">
 <div id="plotA"></div>
@@ -56,9 +60,42 @@ Choose Y Axis groupings <br>
 var dataRequests = [];
 var hideHistogram = false;
 
-var plotA = new CanvasJS.Chart("plotA", {
+var plotD = new CanvasJS.Chart("plotD", {
 	axisX: [{
-        interval: 1,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
+	axisY:{
+        title: "% Dropped per Second",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        gridColor: "#ddd",
+        minimum: 0,
+        maximum: 100
+	},
+	data: [
+        {
+	    	type: "column",
+	    	name: "samples per second",
+	    	dataPoints: [
+                { y: 100000, label: "Mach" },
+                { y: 50000, label: "Influx" },
+            ]
+	    }
+    ]
+})
+
+var plotA = new CanvasJS.Chart("plotA", {
+    title: {
+        text: "Pre-aggregated Summary Stats",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+    },
+	axisX: [{
+        interval: 10,
         intervalType: "second",
         labelWrap: false,
         labelTextAlign: "right",
@@ -81,6 +118,12 @@ var plotA = new CanvasJS.Chart("plotA", {
 })
 
 var plotB = new CanvasJS.Chart("plotB", {
+    title: {
+        text: "Mach",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+    },
 	axisX: [{
         interval: 1,
         intervalType: "second",
@@ -108,6 +151,12 @@ var plotB = new CanvasJS.Chart("plotB", {
 });
 
 var plotC = new CanvasJS.Chart("plotC", {
+    title: {
+        text: "InfluxDB",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+    },
 	axisX: [{
         interval: 1,
         intervalType: "second",
@@ -279,37 +328,55 @@ function updateHistogram(min_ts, max_ts, shouldRender) {
 }
 
 function updatePlots() {
+    plotA.render();
+    plotB.render();
+    plotC.render();
+
     var max = Date.now() - 1000;
-    var min = max - (1000 * 10); // in millis
+    var min = max - (1000 * 60); // in millis
 
     updateHistogram(min, max, dataRequests.length == 0);
 
     if (dataRequests.length > 0) {
-        var request = JSON.stringify({
+        var req = JSON.stringify({
             lines: dataRequests,
             max_ts_millis: max,
             min_ts_millis: min,
         });
-        var request = new Request("http://localhost:3000/scatterPlot", {
-            method: 'POST',
-            body: request,
-            headers: new Headers({
-                'Content-Type': 'application/json'
-            })
-        });
 
-        fetch(request)
-            .then(data => data.json())
-            .then(data => {
-                console.log(data);
-                updatePlotB(data, min, max);
-                updatePlotC(data, min, max);
-                plotA.render();
-                plotB.render();
-                plotC.render();
+        {
+            var request = new Request("http://localhost:3000/machHandler", {
+                method: 'POST',
+                body: req,
+                headers: new Headers({
+                    'Content-Type': 'application/json'
+                })
             });
-    }
 
+            fetch(request)
+                .then(data => data.json())
+                .then(data => {
+                    updatePlotB(data, min, max);
+                });
+        }
+
+
+        {
+            var request = new Request("http://localhost:3000/influxHandler", {
+                method: 'POST',
+                body: req,
+                headers: new Headers({
+                    'Content-Type': 'application/json'
+                })
+            });
+
+            fetch(request)
+                .then(data => data.json())
+                .then(data => {
+                    updatePlotC(data, min, max);
+                });
+        }
+    }
 }
 
 /*
@@ -319,13 +386,33 @@ function updatePlots() {
         ]
     }
 */
-
 updatePlots();
 setInterval(function() {
     var paused = isPaused();
     console.log(paused);
     if (!paused) {
         updatePlots()
+    }
+}, 1000);
+
+updateSamplesPerSec();
+function updateSamplesPerSec() {
+    fetch("http://localhost:3000/samplesPerSecond")
+        .then(data => data.json())
+        .then(data => {
+            var newPoints = [
+                { y: data[0], label: "Mach" },
+                { y: data[1], label: "Influx" },
+            ];
+            plotD.options.data[0].dataPoints = newPoints;
+            plotD.render();
+        });
+}
+
+setInterval(function() {
+    var paused = isPaused();
+    if (!paused) {
+        updateSamplesPerSec();
     }
 }, 1000);
 

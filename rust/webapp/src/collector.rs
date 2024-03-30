@@ -9,13 +9,34 @@ use std::{
     time::{Instant, Duration},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicUsize, AtomicU64, AtomicBool, Ordering::SeqCst},
     },
     collections::{HashMap, BTreeMap, HashSet},
 };
 use lazy_static::*;
 use serde::*;
 use dashmap::DashMap;
+use chrono::{DateTime, Utc, NaiveDateTime, format::SecondsFormat};
+use serde_json::Value;
+use tokio::time::timeout;
+use influxdb_iox_client::{
+    write::Client,
+    connection::Builder,
+    flight,
+    connection::Connection,
+    format::QueryOutputFormat,
+};
+use influxdb_line_protocol::LineProtocolBuilder;
+use futures::{stream::TryStreamExt, Future};
+use arrow::record_batch::RecordBatch;
+
+static BYTES_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+pub static MACH_COUNT_PER_SEC: AtomicUsize = AtomicUsize::new(0);
+pub static MACH_DROPS_PER_SEC: AtomicUsize = AtomicUsize::new(0);
+
+pub static INFLUX_COUNT_PER_SEC: AtomicUsize = AtomicUsize::new(0);
+pub static INFLUX_DROPS_PER_SEC: AtomicUsize = AtomicUsize::new(0);
 
 static MACH_COUNT: AtomicUsize = AtomicUsize::new(0);
 static MACH_DROP: AtomicUsize = AtomicUsize::new(0);
@@ -177,6 +198,48 @@ pub fn get_histogram(min_ts: u64, max_ts: u64) -> Vec<Point> {
     result
 }
 
+type QueryResult = HashMap<(u64, Vec<FieldValue>), u64>;
+
+struct MachQuerySpec {
+    source: u64,
+    min_ts: u64,
+    max_ts: u64,
+    grouping_func: fn(u64, &Record, &mut (u64, Vec<FieldValue>)),
+    aggregate_func: fn(&Record, &mut u64),
+    resp: Sender<QueryResult>
+}
+
+fn mach_query_worker(rx: Receiver<MachQuerySpec>) {
+    while let Ok(q) = rx.recv() {
+        let MachQuerySpec {
+            source,
+            min_ts,
+            max_ts,
+            grouping_func,
+            aggregate_func,
+            resp
+        } = q;
+        let result = inner_mach_query(
+            source,
+            min_ts,
+            max_ts,
+            grouping_func,
+            aggregate_func
+        );
+        resp.send(result).unwrap();
+    }
+}
+
+lazy_static! {
+    static ref MACH_QUERY_WORKER: Sender<MachQuerySpec> = {
+        let (tx, rx) = bounded(100);
+        thread::spawn(move || {
+            mach_query_worker(rx);
+        });
+        tx
+    };
+}
+
 pub fn mach_query(
     source: u64,
     min_ts: u64,
@@ -184,6 +247,22 @@ pub fn mach_query(
     grouping_func: fn(u64, &Record, &mut (u64, Vec<FieldValue>)),
     aggregate_func: fn(&Record, &mut u64)
 ) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    let (resp, rx) = bounded(1);
+    let spec = MachQuerySpec {
+        source, min_ts, max_ts, grouping_func, aggregate_func, resp
+    };
+    MACH_QUERY_WORKER.clone().send(spec).unwrap();
+    rx.recv().unwrap()
+}
+
+fn inner_mach_query(
+    source: u64,
+    min_ts: u64,
+    max_ts: u64,
+    grouping_func: fn(u64, &Record, &mut (u64, Vec<FieldValue>)),
+    aggregate_func: fn(&Record, &mut u64)
+) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    println!("Range: {}", max_ts - min_ts);
 
     let now = Instant::now();
     let reader = MACH_READER.lock().unwrap().as_ref().unwrap().clone();
@@ -310,6 +389,163 @@ impl MachIterator {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct Item {
+    count: u64,
+    cpu: u64,
+    time: u64,
+}
+
+impl Item {
+    fn parse_object(v: &serde_json::Value) -> Self {
+        let count = v.get("count").unwrap().as_u64().unwrap();
+        let cpu = v.get("cpu").unwrap().as_f64().unwrap() as u64;
+        let time = {
+            let time = v.get("time").unwrap().as_str().unwrap();
+            let parse_fmt = "%Y-%m-%dT%H:%M:%S";
+            let p = NaiveDateTime::parse_from_str(time, parse_fmt).unwrap();
+            p.and_utc().timestamp_micros() as u64
+        };
+
+        Self {
+            count,
+            cpu,
+            time
+        }
+    }
+}
+
+//fn get_influx_cpu_worker(rx: Receiver<(u64, u64, Sender<QueryResult>)>) {
+//    let rt = tokio::runtime::Builder::new_multi_thread()
+//        .worker_threads(64)
+//        .enable_all()
+//        .build()
+//        .unwrap();
+//    let client = influxdb3_client::Client::new("http://127.0.0.1:8181").unwrap();
+//    while let Ok((min_ts, max_ts, tx)) = rx.recv() {
+//        let now = Instant::now();
+//        let r = rt.block_on(async {
+//            let r = inner_get_influx_cpu(min_ts, max_ts, &client).await;
+//            r
+//        });
+//        tx.send(r).unwrap();
+//    }
+//}
+//
+//lazy_static! {
+//    static ref INFLUX_QUERY_WORKER: Sender<(u64, u64, Sender<QueryResult>)> = {
+//        let (tx, rx) = bounded(100);
+//        thread::spawn(move || {
+//            get_influx_cpu_worker(rx);
+//        });
+//        tx
+//    };
+//}
+
+pub async fn get_influx_cpu(
+    min_ts: u64,
+    max_ts: u64
+) -> HashMap<(u64, Vec<FieldValue>), u64> {
+
+    let min_formatted = {
+        let dt = DateTime::from_timestamp_micros(min_ts as i64).unwrap();
+        dt.to_rfc3339()
+    };
+    let max_formatted = {
+        let dt = DateTime::from_timestamp_micros(max_ts as i64).unwrap();
+        dt.to_rfc3339()
+    };
+    let query = format!(
+        "SELECT COUNT(op) FROM kv WHERE time > '{}' GROUP BY time(1s),cpu fill(none)",
+        min_formatted
+    );
+    println!("Query: {}", query);
+
+    let now = Instant::now();
+
+    // This entire bit is adapted from 
+    // https://github.com/influxdata/influxdb/blob/bb6a5c0bf6968117251617cda99cb39a5274b6dd/influxdb_iox/src/commands/query.rs#L77
+    let connection = Builder::default()
+        .build("http://127.0.0.1:8082")
+        .await
+        .unwrap();
+    let mut client = flight::Client::new(connection);
+    client.add_header("bucket", "vldb_demo").unwrap();
+    let mut query_results = client.influxql("vldb_demo", query.clone()).await.unwrap();
+    let mut batches: Vec<_> = (&mut query_results).try_collect().await.unwrap();
+    println!("Influx query {} took: {:?}", query, now.elapsed());
+
+    let schema = query_results
+        .inner()
+        .schema()
+        .cloned()
+        .ok_or(influxdb_iox_client::flight::Error::NoSchema).unwrap();
+    batches.push(RecordBatch::new_empty(schema));
+    let formatted_result = QueryOutputFormat::Json.format(&batches).unwrap();
+
+    let v: Value = serde_json::from_str(&formatted_result).unwrap();
+
+    let mut map = HashMap::new();
+
+    let arr = v.as_array().unwrap();
+    for item in arr {
+        let parsed_item = Item::parse_object(item);
+        let key = {
+            let group = vec![FieldValue::KVCpu(parsed_item.cpu)];
+            (parsed_item.time, group)
+        };
+        map.insert(key, parsed_item.count);
+    }
+
+    map
+}
+
+//async fn inner_get_influx_cpu(
+//    min_ts: u64,
+//    max_ts: u64,
+//    client: &influxdb3_client::Client
+//) -> HashMap<(u64, Vec<FieldValue>), u64> {
+//
+//    let min_formatted = {
+//        let dt = DateTime::from_timestamp_micros(min_ts as i64).unwrap();
+//        dt.to_rfc3339()
+//    };
+//    let max_formatted = {
+//        let dt = DateTime::from_timestamp_micros(max_ts as i64).unwrap();
+//        dt.to_rfc3339()
+//    };
+//    let query = format!(
+//        "SELECT * FROM kv WHERE time > '{}'",
+//        min_formatted
+//    );
+//    println!("Query: {}", query);
+//
+//    let now = Instant::now();
+//    let mut resp_bytes = client
+//        .api_v3_query_sql("vldb-demo", query.clone())
+//        .format(influxdb3_client::Format::Json) // could be Json
+//        .send()
+//        .await
+//        .unwrap();
+//    println!("Influx query {} took: {:?}", query, now.elapsed());
+//
+//    let data: &str = std::str::from_utf8(&resp_bytes).unwrap();
+//    let v: Value = serde_json::from_str(data).unwrap();
+//
+//    //let arr = v.as_array().unwrap();
+//    let mut map = HashMap::new();
+//    //for item in arr {
+//    //    let parsed_item = Item::parse_object(item);
+//    //    let key = {
+//    //        let group = vec![FieldValue::KVCpu(parsed_item.cpu)];
+//    //        (parsed_item.time, group)
+//    //    };
+//    //    map.insert(key, parsed_item.count);
+//    //}
+//    map
+//}
+
+
 fn filter(data: Vec<Record>) -> Arc<[Record]> {
     let mut v = Vec::new();
 
@@ -336,6 +572,7 @@ fn filter(data: Vec<Record>) -> Arc<[Record]> {
 /***************************
 COLLECTORS
 ***************************/
+
 
 pub fn init_collector() {
     let server_rx: IpcReceiver<Vec<Record>> = ipc_receiver("localhost:3001");
@@ -374,6 +611,36 @@ pub fn init_collector() {
     }
 }
 
+fn make_lp_bytes(samples: &[Record]) -> Vec<u8> {
+    let mut lp = LineProtocolBuilder::new();
+
+    for r in samples {
+        match r.data {
+            Data::Sched(x) => panic!("Unimplmented line protocol"),
+                Data::Hist(x) => {
+                    lp = lp
+                        .measurement("hist")
+                        .tag("source","hist")
+                        .field("max",x.max)
+                        .field("ts",r.timestamp)
+                        .close_line();
+                },
+                Data::KV(x) => {
+                    lp = lp
+                        .measurement("kv")
+                        .tag("source","kv")
+                        .field("op", x.op as u64)
+                        .field("cpu", x.cpu)
+                        .field("tid", x.tid)
+                        .field("dur_nanos", x.dur_nanos)
+                        .field("ts",r.timestamp)
+                        .close_line();
+                },
+        }
+    }
+    lp.build()
+}
+
 fn append_to_lp(lp: &mut String, timestamp: u64, r: &Record) {
     use std::fmt::Write;
 
@@ -381,10 +648,10 @@ fn append_to_lp(lp: &mut String, timestamp: u64, r: &Record) {
     if lp.len() > 0 {
         lp.push('\n');
     }
-    lp.push_str("data,");
     match r.data {
         Data::Sched(x) => panic!("Unimplmented line protocol"),
         Data::Hist(x) => {
+            lp.push_str("hist,");
             lp.push_str("source=hist ");
             lp.push_str("max=");
             write!(lp, "{},", x.max);
@@ -392,13 +659,18 @@ fn append_to_lp(lp: &mut String, timestamp: u64, r: &Record) {
             write!(lp, "{},", x.cnt);
         },
         Data::KV(x) => {
+            lp.push_str("kv,");
             lp.push_str("source=hist ");
+
             lp.push_str("op=");
             write!(lp, "{},", x.op as u64);
+
             lp.push_str("cpu=");
             write!(lp, "{},", x.cpu);
+
             lp.push_str("tid=");
             write!(lp, "{},", x.tid);
+
             lp.push_str("dur_nanos=");
             write!(lp, "{},", x.dur_nanos);
         },
@@ -406,54 +678,91 @@ fn append_to_lp(lp: &mut String, timestamp: u64, r: &Record) {
 
     // generation timestamp
     lp.push_str("ts=");
-    write!(lp, "{} ",ts);
+    write!(lp, "{}",ts);
 
-    // arrival timestamp
-    write!(lp, "{}",timestamp);
-
+    write!(lp, " {}", timestamp);
 }
+
+static INFLUX_MAX: AtomicU64 = AtomicU64::new(0);
+static INFLUX_WRITE_ADDR: &str = "http://127.0.0.1:8080";
 
 fn init_influx_sink(rx: Receiver<Arc<[Record]>>) {
     thread::spawn(move || {
+        let mut last_count = 0;
+        let mut last_drop = 0;
         loop {
-            let count = INFLUX_COUNT.swap(0, SeqCst);
-            let drop = INFLUX_DROP.swap(0, SeqCst);
-            println!("Influx Count {}\t Drop {}", count, drop);
+            let count = INFLUX_COUNT.load(SeqCst);
+            let drop = INFLUX_DROP.load(SeqCst);
+            println!(
+                "Influx Count {}\t Drop {}",
+                count-last_count,
+                drop-last_drop
+            );
+            INFLUX_COUNT_PER_SEC.swap(count - last_count, SeqCst);
+            INFLUX_DROPS_PER_SEC.swap(drop - last_drop, SeqCst);
+            last_count = count;
+            last_drop = drop;
             thread::sleep(Duration::from_secs(1));
         }
     });
 
-    let mut client = influxdb3_client::Client::new("http://127.0.0.1:8181").unwrap();
-    let mut buf = String::new();
-    loop {
-        if let Ok(data) = rx.try_recv() {
-            let now = micros_since_epoch();
-            buf.clear();
-            for item in data.iter() {
-                append_to_lp(&mut buf, now, item);
-            }
-
-            let lp = buf.clone();
-            let mut req = client.api_v3_write_lp("vldb-demo");
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
+    let mut handles = Vec::new();
+    for _ in 0..1 {
+        let rx = rx.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let connection = rt.block_on(async {
+            Builder::default()
+                .build(INFLUX_WRITE_ADDR)
+                .await
                 .unwrap()
-                .block_on(async {
-                    req.body(lp).send().await.unwrap();
-                });
-            INFLUX_COUNT.fetch_add(data.len(), SeqCst);
-        }
+        });
+        let mut client = Client::new(connection);
+        //let mut buf = String::new();
+        handles.push(thread::spawn(move || {
+            loop {
+                if let Ok(data) = rx.try_recv() {
+                    let now = micros_since_epoch();
+                    //buf.clear();
+                    let buf = make_lp_bytes(&data);
+                    //for item in data.iter() {
+                    //    append_to_lp(&mut buf, now, item);
+                    //}
+                    let lp = std::str::from_utf8(&buf[..]).unwrap();
+                    //let mut req = client.api_v3_write_lp("vldb-demo");
+                    rt.block_on(async {
+                        client.write_lp("vldb_demo", lp).await.unwrap();
+                    });
+                    INFLUX_COUNT.fetch_add(data.len(), SeqCst);
+                    INFLUX_MAX.store(now, SeqCst);
+                }
+            }
+        }));
+    }
+    for h in handles {
+        h.join();
     }
 }
 
 fn init_mach_sink(mut mach: Mach, rx: Receiver<Arc<[Record]>>) {
     let mut sl = Vec::new();
     thread::spawn(move || {
+        let mut last_count = 0;
+        let mut last_drop = 0;
         loop {
-            let count = MACH_COUNT.swap(0, SeqCst);
-            let drop = MACH_DROP.swap(0, SeqCst);
-            println!("Mach Count {}\t Drop {}", count, drop);
+            let count = MACH_COUNT.load(SeqCst);
+            let drop = MACH_DROP.load(SeqCst);
+            println!(
+                "Mach Count {}\t Drop {}",
+                count-last_count,
+                drop-last_drop
+            );
+            MACH_COUNT_PER_SEC.swap(count-last_count, SeqCst);
+            MACH_DROPS_PER_SEC.swap(drop-last_drop, SeqCst);
+            last_count = count;
+            last_drop = drop;
             thread::sleep(Duration::from_secs(1));
         }
     });

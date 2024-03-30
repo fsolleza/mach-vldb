@@ -42,14 +42,21 @@ impl<const D: usize> Matrix<D> {
     }
 }
 
+fn set_core_affinity(cpu: usize) {
+    use core_affinity::{set_for_current, CoreId};
+    assert!(set_for_current(CoreId { id: cpu }));
+}
+
 const N: usize = 512; // 512mb matrix
 const THREADS: usize = 1;
+const THREAD_CHOICE: [u64; 2] = [1, 15];
 
 fn main() {
     let mut handles = Vec::new();
     for i in 0..THREADS {
         let h = thread::spawn(move || {
-            assert!(core_affinity::set_for_current(core_affinity::CoreId { id: 1 }));
+            let mut rng = thread_rng();
+            set_core_affinity(1);
             assert!(set_current_thread_priority(ThreadPriority::Max).is_ok());
             let a: Matrix<N> = Matrix::random();
             let b: Matrix<N> = Matrix::random();
@@ -60,7 +67,10 @@ fn main() {
                 total = a.multiply(&b).sum();
                 let dur = now.elapsed().as_secs_f64();
                 println!("Total: {} {}", total, dur);
-                thread::sleep(Duration::from_secs(10));
+                let idx = rng.gen_range(0usize..THREAD_CHOICE.len());
+                set_core_affinity(THREAD_CHOICE[idx] as usize);
+                let secs: u64 = rng.gen_range(20u64..30);
+                thread::sleep(Duration::from_secs(secs));
                 println!("About to multiply");
                 thread::sleep(Duration::from_secs(1));
             }

@@ -4538,6 +4538,7 @@ dependencies = [
 name = "writer"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "influxdb3_client",
  "tokio",
 ]

@@ -4,3 +4,6 @@
 [submodule "rust/influxdb"]
 	path = rust/influxdb
 	url = https://github.com/influxdata/influxdb.git
+[submodule "rust/influxdb3_core"]
+	path = rust/influxdb3_core
+	url = https://github.com/influxdata/influxdb3_core.git

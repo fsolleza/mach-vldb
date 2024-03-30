@@ -18,7 +18,12 @@ serde_json = "1"
 lazy_static = "1"
 crossbeam = "0.8"
 bincode = "1"
+chrono = { version = "0.4.37", features = ["alloc"] }
 
 common = { path = "../common" }
 mach-lib = { path = "../mach-lib" }
-influxdb3_client = { path = "../influxdb/influxdb3_client" }
+influxdb_iox_client = { path = "../influxdb/influxdb_iox_client" }
+influxdb-line-protocol = { path = "../influxdb/influxdb_line_protocol" }
+arrow = { version = "46.0.0" }
+#influxdb3_client = { path = "../influxdb/influxdb3_client" }
+
