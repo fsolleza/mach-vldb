@@ -29,6 +29,7 @@ use influxdb_iox_client::{
 use influxdb_line_protocol::LineProtocolBuilder;
 use futures::{stream::TryStreamExt, Future};
 use arrow::record_batch::RecordBatch;
+use std::fmt::Write;
 
 static BYTES_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -465,6 +466,7 @@ pub async fn get_influx_cpu(
 
     // This entire bit is adapted from 
     // https://github.com/influxdata/influxdb/blob/bb6a5c0bf6968117251617cda99cb39a5274b6dd/influxdb_iox/src/commands/query.rs#L77
+
     let connection = Builder::default()
         .build("http://127.0.0.1:8082")
         .await
@@ -611,79 +613,47 @@ pub fn init_collector() {
     }
 }
 
-fn make_lp_bytes(samples: &[Record]) -> Vec<u8> {
+fn make_lp_bytes(samples: &[Record], time_micros: u64) -> Vec<u8> {
     let mut lp = LineProtocolBuilder::new();
+    let time_nanos = (time_micros * 1000) as i64;
 
+    let mut tuple_ids = INFLUX_TUPLE_ID.fetch_add(samples.len() as u64, SeqCst);
+    let mut buf = String::new();
     for r in samples {
+        write!(&mut buf, "{}", tuple_ids);
+        tuple_ids += 1;
         match r.data {
             Data::Sched(x) => panic!("Unimplmented line protocol"),
                 Data::Hist(x) => {
                     lp = lp
                         .measurement("hist")
                         .tag("source","hist")
+                        .tag("id", &buf)
                         .field("max",x.max)
                         .field("ts",r.timestamp)
+                        .timestamp(time_nanos)
                         .close_line();
                 },
                 Data::KV(x) => {
                     lp = lp
                         .measurement("kv")
                         .tag("source","kv")
+                        .tag("id", &buf)
                         .field("op", x.op as u64)
                         .field("cpu", x.cpu)
                         .field("tid", x.tid)
                         .field("dur_nanos", x.dur_nanos)
                         .field("ts",r.timestamp)
+                        .timestamp(time_nanos)
                         .close_line();
                 },
         }
+        buf.clear();
     }
     lp.build()
 }
 
-fn append_to_lp(lp: &mut String, timestamp: u64, r: &Record) {
-    use std::fmt::Write;
-
-    let ts = r.timestamp;
-    if lp.len() > 0 {
-        lp.push('\n');
-    }
-    match r.data {
-        Data::Sched(x) => panic!("Unimplmented line protocol"),
-        Data::Hist(x) => {
-            lp.push_str("hist,");
-            lp.push_str("source=hist ");
-            lp.push_str("max=");
-            write!(lp, "{},", x.max);
-            lp.push_str("cnt=");
-            write!(lp, "{},", x.cnt);
-        },
-        Data::KV(x) => {
-            lp.push_str("kv,");
-            lp.push_str("source=hist ");
-
-            lp.push_str("op=");
-            write!(lp, "{},", x.op as u64);
-
-            lp.push_str("cpu=");
-            write!(lp, "{},", x.cpu);
-
-            lp.push_str("tid=");
-            write!(lp, "{},", x.tid);
-
-            lp.push_str("dur_nanos=");
-            write!(lp, "{},", x.dur_nanos);
-        },
-    }
-
-    // generation timestamp
-    lp.push_str("ts=");
-    write!(lp, "{}",ts);
-
-    write!(lp, " {}", timestamp);
-}
-
-static INFLUX_MAX: AtomicU64 = AtomicU64::new(0);
+static INFLUX_TUPLE_ID: AtomicU64 = AtomicU64::new(0);
 static INFLUX_WRITE_ADDR: &str = "http://127.0.0.1:8080";
 
 fn init_influx_sink(rx: Receiver<Arc<[Record]>>) {
@@ -707,7 +677,7 @@ fn init_influx_sink(rx: Receiver<Arc<[Record]>>) {
     });
 
     let mut handles = Vec::new();
-    for _ in 0..1 {
+    for _ in 0..4 {
         let rx = rx.clone();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -725,18 +695,13 @@ fn init_influx_sink(rx: Receiver<Arc<[Record]>>) {
             loop {
                 if let Ok(data) = rx.try_recv() {
                     let now = micros_since_epoch();
-                    //buf.clear();
-                    let buf = make_lp_bytes(&data);
-                    //for item in data.iter() {
-                    //    append_to_lp(&mut buf, now, item);
-                    //}
+                    let buf = make_lp_bytes(&data, now);
                     let lp = std::str::from_utf8(&buf[..]).unwrap();
-                    //let mut req = client.api_v3_write_lp("vldb-demo");
                     rt.block_on(async {
                         client.write_lp("vldb_demo", lp).await.unwrap();
                     });
                     INFLUX_COUNT.fetch_add(data.len(), SeqCst);
-                    INFLUX_MAX.store(now, SeqCst);
+                    //INFLUX_MAX.store(now, SeqCst);
                 }
             }
         }));
