@@ -76,13 +76,27 @@ impl Data {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub unsafe fn parse_comm(comm: &[u8]) -> &str {
+    let i8sl = &*(comm as *const _  as *const [i8]);
+    std::ffi::CStr::from_ptr(i8sl[..].as_ptr()).to_str().unwrap()
+}
+
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
 #[repr(C)]
 pub struct Sched {
     pub prev_pid: u64,
     pub next_pid: u64,
     pub cpu: u64,
-    pub comm: String,
+    pub comm: [u8; 16],
+}
+
+impl Sched {
+    pub fn parse_comm(&self) -> &str {
+        unsafe {
+            parse_comm(&self.comm)
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Eq, PartialEq)]

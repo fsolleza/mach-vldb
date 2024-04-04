@@ -17,6 +17,7 @@ core_affinity = "0.8.1"
 rocksdb = "0.22"
 
 common = { path = "../common" }
+influx-server = { path = "../influx-server" }
 
 [[bin]]
 name = "kv-workload"

@@ -50,53 +50,61 @@ static DROPPED: AtomicUsize = AtomicUsize::new(0);
 static EVENTS: AtomicUsize = AtomicUsize::new(0);
 
 fn init_counter() {
+    let count_ipc = ipc_sender("0.0.0.0:3001", Some(32));
     loop {
         let c = COUNT.swap(0, SeqCst);
         let d = DROPPED.swap(0, SeqCst);
         let e = EVENTS.swap(0, SeqCst);
         println!("Count: {} {} {}", c, d, e);
+        count_ipc.send(c).unwrap();
         std::thread::sleep(Duration::from_secs_f64(0.25));
     }
 }
 
 fn init_egress() -> Sender<Record> {
     let (tx, rx) = bounded(4096);
-    let ipc = ipc_sender("0.0.0.0:3001", None);
+    let mach_ipc = ipc_sender("0.0.0.0:3020", Some(32));
+    let infl_ipc = ipc_sender("0.0.0.0:3040", Some(32));
     thread::spawn(move || {
-        egress(rx, ipc);
+        egress(rx, mach_ipc, infl_ipc);
     });
     tx
 }
 
-fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
+fn egress(rx: Receiver<Record>, mach_ipc: Sender<Vec<Record>>, infl_ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
     println!("Beginning egress loop");
     while let Ok(item) = rx.recv() {
         batch.push(item);
         if batch.len() == 1024 {
-            if ipc.try_send(batch).is_ok() {
-                COUNT.fetch_add(1024, SeqCst);
-            } else {
+            if mach_ipc.try_send(batch.clone()).is_err() {
+                DROPPED.fetch_add(1024, SeqCst);
+                continue;
+            }
+            if infl_ipc.try_send(batch).is_err() {
                 DROPPED.fetch_add(1024, SeqCst);
             }
+            COUNT.fetch_add(1024, SeqCst);
             batch = Vec::new();
         }
     }
 }
 
-fn parse_comm(comm: [i8; 16]) -> String {
+fn parse_comm(comm: [i8; 16]) -> [u8; 16] {
     use std::ffi::CStr;
-    let s = unsafe {
+    let mut replace = [b'\0'; 16];
+    unsafe {
         let x: Vec<&str> = CStr::from_ptr(comm[..].as_ptr())
             .to_str()
             .unwrap()
             .split("/")
             .take(1)
             .collect();
-        x[0].into()
+        let sl = x[0].as_bytes();
+        replace[..sl.len()].copy_from_slice(sl);
     };
-    println!("{}", s);
-    s
+    println!("{:?}", replace);
+    replace
 }
 
 #[repr(C)]

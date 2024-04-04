@@ -8,9 +8,11 @@ GATHER_CPU := 15-20
 SCHED_CPU := 21-25
 INFLUX_CPU := 26-36
 WEBAPP_CPU := 37-47
+MACH_CPU := 47-50
 
 .PHONY: start
 start: webapp workload
+	@echo "+ all setup, visit localhost:3000"
 
 .PHONY: kv-workload
 kv-workload: tmp_dir
@@ -49,7 +51,7 @@ make_sudo:
 
 .PHONY: workload
 workload: tmp_dir make_sudo gather kv-workload matmul-workload
-	@echo "+ workload running. visit localhost:3000"
+	@echo "+ workload running"
 
 .PHONY: influx
 influx: tmp_dir
@@ -70,9 +72,20 @@ influx: tmp_dir
 	@$(INFLUX_BIN) table create vldb_demo table_kv --host $(INFLUX_CTLHOST) > /dev/null 2>&1
 	@$(INFLUX_BIN) table create vldb_demo table_hist --host $(INFLUX_CTLHOST) > /dev/null 2>&1
 	@$(INFLUX_BIN) table create vldb_demo table_sched --host $(INFLUX_CTLHOST) > /dev/null 2>&1
+	@echo "+ running influx server"
+	@cd influx-server; cargo build --release > ../tmp/build-influx-server 2>&1
+	@taskset --cpu-list $(INFLUX_CPU) ./influx-server/target/release/influx-server > tmp/log-influx-server 2>&1 &
+
+.PHONY: influx
+mach: tmp_dir
+	@cd mach-server; cargo build --release --bin mach-server \
+		> ../tmp/build-mach-server 2>&1
+	@taskset --cpu-list $(MACH_CPU) ./mach-server/target/release/mach-server \
+		> tmp/log-mach-server 2>&1 &
+	@echo "+ mach-server running"
 
 .PHONY: webapp
-webapp: tmp_dir influx
+webapp: tmp_dir influx mach
 	@echo "+ building and running webapp"
 	@cd webapp; cargo build --release > ../tmp/build-webapp 2>&1
 	@taskset --cpu-list $(WEBAPP_CPU) ./webapp/target/release/webapp > tmp/log-webapp 2>&1 &
@@ -99,6 +112,9 @@ stop: make_sudo
 	@-sudo pkill -9 sched_switch > /dev/null 2>&1 || true
 	@echo "+ attempting to kill influx"
 	@-sudo pkill -9 influxdb_iox > /dev/null 2>&1 || true
+	@-sudo pkill -9 influx-server > /dev/null 2>&1 || true
+	@echo "+ attempting to kill mach"
+	@-sudo pkill mach-server > /dev/null 2>&1 || true
 	@echo "+ attempting to kill webapp"
 	@-sudo pkill -9 webapp > /dev/null 2>&1 || true
 	@ps -a

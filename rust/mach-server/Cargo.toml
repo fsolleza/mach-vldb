@@ -1,15 +1,23 @@
 [package]
-name = "common"
+name = "mach-server"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-crossbeam = "0.8"
-toml = "0.8.8"
 bincode = "1"
-clap = { version = "4.3", default-features = false, features = ["std", "derive"] }
 serde = { version="1", features=["derive"] }
-rayon = "1.10.0"
+fxhash = "0.2.1"
+
+common = { path = "../common" }
+mach-lib = { path = "../mach-lib" }
+
+[lib]
+name = "mach_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mach-server"
+path = "src/mach-server.rs"
 

@@ -419,6 +419,14 @@ function updateY1(plot, newData) {
             item["color"] = "grey";
             item["lineDashType"] = "dot";
         }
+        if (source === "KVCpu(1), ") {
+            item["lineColor"] = "#90b353";
+            item["color"] = "#90b353";
+        }
+        if (source === "KVCpu(3), ") {
+            item["lineColor"] = "#b84847";
+            item["color"] = "#b84847";
+        }
         newScatterData.push(item);
     }
     for (i = 0; i < plot.options.data.length; i++) {
@@ -472,6 +480,7 @@ function updateY2(plot, newData) {
 	        	dataPoints: sourceData,
                 markerType: "triangle",
                 markerSize: 10,
+                color: "#f58d47",
 	        };
 
             var grey = new Set();
@@ -483,6 +492,7 @@ function updateY2(plot, newData) {
                 item["color"] = "grey";
                 item["lineDashType"] = "dot";
             }
+
             newScatterData.push(item);
         }
     }
@@ -575,7 +585,7 @@ function updateSchedEventsPerSec(min_ts, max_ts) {
     }
 
     {
-        var request = new Request("http://localhost:4000/influxHandler", {
+        var request = new Request("http://localhost:3000/influxHandler", {
             method: 'POST',
             body: req,
             headers: new Headers({
@@ -586,6 +596,7 @@ function updateSchedEventsPerSec(min_ts, max_ts) {
         fetch(request)
             .then(data => data.json())
             .then(data => {
+                console.log("Influx scheduler data", data);
                 updateY2(plotC, data);
             });
     }
@@ -675,6 +686,7 @@ function updateSamplesPerSec() {
     fetch("http://localhost:3000/samplesPerSecond")
         .then(data => data.json())
         .then(data => {
+            console.log("Fetched count data");
             var newPoints = [
                 { y: data[0], label: "Mach" },
                 { y: data[1], label: "Influx" },

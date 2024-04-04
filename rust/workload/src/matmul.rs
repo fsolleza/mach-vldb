@@ -62,15 +62,16 @@ fn main() {
     let mut handles = Vec::new();
     for i in 0..THREADS {
         let h = thread::spawn(move || {
+            let mut idx = 0;
             let mut rng = thread_rng();
-            set_core_affinity(THREAD_CHOICE[rng.gen_range(0usize..2)]);
+            set_core_affinity(THREAD_CHOICE[idx]);
             assert!(set_current_thread_priority(ThreadPriority::Max).is_ok());
             let a: Matrix<N> = Matrix::random();
             let b: Matrix<N> = Matrix::random();
             let mut print_a = true;
             let mut total = 0.;
             loop {
-                let idx = rng.gen_range(0usize..THREAD_CHOICE.len());
+                idx = if idx == 0 { 1 } else { 0 };
                 let cpu = THREAD_CHOICE[idx] as usize;
                 set_core_affinity(THREAD_CHOICE[idx] as usize);
                 let now = Instant::now();

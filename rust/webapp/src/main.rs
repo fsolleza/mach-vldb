@@ -22,11 +22,12 @@ use lazy_static::*;
 use std::cmp::Reverse;
 use collector::*;
 use tokio::sync::mpsc;
+use fxhash::FxHashMap;
 
 fn main() {
     let mut handles = Vec::new();
     handles.push(thread::spawn(move || {
-        let builder = runtime::Builder::new_current_thread()
+        let builder = runtime::Builder::new_multi_thread()
             .worker_threads(64)
             .enable_all()
             .build()
@@ -35,7 +36,7 @@ fn main() {
             web_server().await;
         });
     }));
-    collector::init_collector();
+    //collector::init_collector();
     for h in handles {
         h.join().unwrap();
     }
@@ -111,6 +112,7 @@ fn source_to_int(s: &str) -> u64 {
 }
 
 async fn web_server() {
+    init_count_receiver();
     let app = Router::new()
         .route("/", get(index))
         .route("/machHandler", post(machHandler))
@@ -130,16 +132,13 @@ async fn index() -> Html<&'static str> {
 }
 
 async fn samplesPerSecHandler() -> impl IntoResponse {
-    let mach_count = collector::MACH_COUNT_PER_SEC.load(SeqCst);
-    let influx_count = collector::INFLUX_COUNT_PER_SEC.load(SeqCst);
-    let mach_dropped = collector::MACH_DROPS_PER_SEC.load(SeqCst);
-    let influx_dropped = collector::INFLUX_DROPS_PER_SEC.load(SeqCst);
+    println!("samples per second handler");
+    let mach_count = get_mach_count() as f64;
+    let influx_count = get_influx_count() as f64;
+    let total_count = get_total_count() as f64;
 
-    let m_total = mach_count + mach_dropped;
-    let m = (100. * (mach_dropped as f64 / (m_total) as f64)) as u64;
-
-    let i_total = influx_count + influx_dropped;
-    let i = (100. * (influx_dropped as f64 / (i_total) as f64)) as u64;
+    let m = 100. * (1. - (mach_count / total_count));
+    let i = 100. * (1. - (influx_count / total_count));
 
     Json((m, i))
 }
@@ -176,7 +175,7 @@ async fn get_histogram_handler(
     Json(result)
 }
 
-type QueryResult = HashMap<(u64, Vec<FieldValue>), u64>;
+type QueryResult = FxHashMap<(u64, Vec<FieldValue>), u64>;
 
 struct Cached {
     result: QueryResult,
@@ -187,7 +186,7 @@ struct Cached {
 impl Cached {
     fn new_empty() -> Self {
         Self {
-            result: HashMap::new(),
+            result: FxHashMap::default(),
             min_ts: u64::MAX,
             max_ts: u64::MAX
         }
@@ -231,7 +230,7 @@ lazy_static! {
     };
 }
 
-async fn get_influx_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+async fn get_influx_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> FxHashMap<(u64, Vec<FieldValue>), u64> {
     let now = Instant::now();
     let r = if line.source == "kv" && line.field == "kvdur" && line.agg == "count" {
         let r = get_influx_cpu(min_ts, max_ts).await;
@@ -247,11 +246,6 @@ async fn get_influx_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> HashMa
     r
 }
 
-
-async fn influx_worker(mut rx: mpsc::Receiver<(ScatterRequest, mpsc::Sender<ScatterResponse>)>) {
-    while let Some((req, tx)) = rx.recv().await {
-    }
-}
 
 async fn influxHandler(
     msg: Json<ScatterRequest>,
@@ -311,7 +305,7 @@ async fn influxHandler(
         Json(response)
 }
 
-fn get_mach_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+fn get_mach_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> FxHashMap<(u64, Vec<FieldValue>), u64> {
     let now = Instant::now();
     let r = if line.source == "kv" && line.field == "kvdur" && line.agg == "count" {
         let r = get_mach_cpu(min_ts, max_ts);

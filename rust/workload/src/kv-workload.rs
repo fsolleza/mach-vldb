@@ -176,7 +176,7 @@ fn do_work(
         static ref DATA: Vec<u8> = random_data(1024 * 4);
     }
 
-    let log_out = ipc_sender("0.0.0.0:3010", Some(1028));
+    let log_out = ipc_sender("0.0.0.0:3010", Some(16));
 
     let data: &'static [u8] = DATA.as_slice();
     assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
@@ -227,8 +227,11 @@ fn do_work(
                         tid,
                     }),
                 });
-                if records.len() > 1024 {
-                    log_out.send(records).unwrap();
+                let l = records.len();
+                if l > 1024 {
+                    if log_out.try_send(records).is_err() {
+                        DROPPED.fetch_add(l, SeqCst);
+                    }
                     records = Vec::new();
                 }
                 continue;
@@ -254,8 +257,11 @@ fn do_work(
                 tid,
             }),
         });
-        if records.len() > 1024 {
-            log_out.send(records).unwrap();
+        let l = records.len();
+        if l > 1024 {
+            if log_out.try_send(records).is_err() {
+                DROPPED.fetch_add(l, SeqCst);
+            }
             records = Vec::new();
         }
     }

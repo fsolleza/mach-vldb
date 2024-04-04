@@ -19,9 +19,13 @@ lazy_static = "1"
 crossbeam = "0.8"
 bincode = "1"
 chrono = { version = "0.4.37", features = ["alloc"] }
+fxhash = "0.2.1"
 
 common = { path = "../common" }
 mach-lib = { path = "../mach-lib" }
+influx-server = { path = "../influx-server" }
+mach-server = { path = "../mach-server" }
+
 influxdb_iox_client = { path = "../influxdb/influxdb_iox_client" }
 influxdb-line-protocol = { path = "../influxdb/influxdb_line_protocol" }
 arrow = { version = "46.0.0" }

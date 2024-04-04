@@ -26,3 +26,11 @@ influxdb-line-protocol = { path = "../influxdb/influxdb_line_protocol" }
 arrow = { version = "46.0.0" }
 #influxdb3_client = { path = "../influxdb/influxdb3_client" }
 
+[lib]
+name = "influx_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "influx-server"
+path = "src/influx-server.rs"
+

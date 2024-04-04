@@ -1,3 +1,4 @@
+use influx_server::*;
 use common::{
     ipc::*,
     data::*,
@@ -12,20 +13,24 @@ static COUNT: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 
 fn init_print_counter() {
+    let count_tx: IpcSender<u64> = ipc_sender("0.0.0.0:3001", Some(32));
     thread::spawn(move || {
         loop {
             let c = COUNT.swap(0, SeqCst);
             let d = DROPPED.swap(0, SeqCst);
             println!("Count: {} {}", c, d);
+            count_tx.send(c as u64).unwrap();
             thread::sleep(Duration::from_secs(1));
         }
     });
 }
 
 fn main() {
-    let ipc: IpcSender<Vec<Record>> = ipc_sender("0.0.0.0:3001", Some(1024));
-    let rx: IpcReceiver<Vec<Record>> = ipc_receiver("0.0.0.0:3010");
     init_print_counter();
+
+    let influx_tx: IpcSender<Vec<Record>> = ipc_sender("0.0.0.0:3040", Some(32));
+    let mach_tx: IpcSender<Vec<Record>> = ipc_sender("0.0.0.0:3020", Some(1024));
+    let rx: IpcReceiver<Vec<Record>> = ipc_receiver("0.0.0.0:3010");
 
     let mut hist: Histogram = Histogram::default();
     let mut hist_timestamp = {
@@ -58,10 +63,26 @@ fn main() {
         }
 
         let len = batch.len();
-        if ipc.try_send(batch).is_err() {
+
+        COUNT.fetch_add(len, SeqCst);
+
+        if influx_tx.try_send(batch.clone()).is_err() {
             DROPPED.fetch_add(len, SeqCst);
-        } else {
-            COUNT.fetch_add(len, SeqCst);
+            continue;
         }
+
+        if mach_tx.try_send(batch).is_err() {
+            DROPPED.fetch_add(len, SeqCst);
+            continue;
+        }
+
+        //let request = InfluxRequest::Write(batch);
+        //let resp: InfluxResponse = ipc_send(&request, &mut influx_client).unwrap();
+        //match resp {
+        //    InfluxResponse::Err(_) => DROPPED.fetch_add(len, SeqCst),
+        //    InfluxResponse::Ok => COUNT.fetch_add(len, SeqCst),
+        //    _ => unreachable!(),
+        //};
+
     }
 }
