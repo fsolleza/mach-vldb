@@ -20,13 +20,13 @@ pub struct Batch {
     pub records: Vec<Record>,
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Record {
     pub timestamp: u64,
     pub data: Data,
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Data {
     Sched(Sched),
     KV(KVLog),
@@ -76,12 +76,13 @@ impl Data {
     }
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[repr(C)]
 pub struct Sched {
     pub prev_pid: u64,
     pub next_pid: u64,
     pub cpu: u64,
+    pub comm: String,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Eq, PartialEq)]

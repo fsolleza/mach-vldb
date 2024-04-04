@@ -17,7 +17,7 @@ use lazy_static::*;
 use crossbeam::channel::{Sender, Receiver, bounded};
 use common::{
     ipc::*,
-    data::{Sched, Record},
+    data::{Sched, Data, Record},
 };
 
 use clap::Parser;
@@ -29,7 +29,7 @@ mod sched_switch {
 use sched_switch::*;
 
 lazy_static! {
-    static ref RECORD_SENDER: Sender<Sched> = init_egress();
+    static ref RECORD_SENDER: Sender<Record> = init_egress();
 }
 
 fn bump_memlock_rlimit() -> Result<(), ()> {
@@ -46,17 +46,21 @@ fn bump_memlock_rlimit() -> Result<(), ()> {
 }
 
 static COUNT: AtomicUsize = AtomicUsize::new(0);
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+static EVENTS: AtomicUsize = AtomicUsize::new(0);
 
 fn init_counter() {
     loop {
-        let x = COUNT.swap(0, SeqCst);
-        println!("Count: {}", x);
-        std::thread::sleep(Duration::from_secs(1));
+        let c = COUNT.swap(0, SeqCst);
+        let d = DROPPED.swap(0, SeqCst);
+        let e = EVENTS.swap(0, SeqCst);
+        println!("Count: {} {} {}", c, d, e);
+        std::thread::sleep(Duration::from_secs_f64(0.25));
     }
 }
 
-fn init_egress() -> Sender<Sched> {
-    let (tx, rx) = bounded(1000000);
+fn init_egress() -> Sender<Record> {
+    let (tx, rx) = bounded(4096);
     let ipc = ipc_sender("0.0.0.0:3001", None);
     thread::spawn(move || {
         egress(rx, ipc);
@@ -64,36 +68,78 @@ fn init_egress() -> Sender<Sched> {
     tx
 }
 
-fn egress(rx: Receiver<Sched>, ipc: Sender<Vec<Record>>) {
+fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
     let mut batch: Vec<Record> = Vec::new();
     println!("Beginning egress loop");
     while let Ok(item) = rx.recv() {
-        batch.push(Record::Sched(item));
+        batch.push(item);
         if batch.len() == 1024 {
-            ipc.send(batch).unwrap();
+            if ipc.try_send(batch).is_ok() {
+                COUNT.fetch_add(1024, SeqCst);
+            } else {
+                DROPPED.fetch_add(1024, SeqCst);
+            }
             batch = Vec::new();
-            println!("Sending");
-            COUNT.fetch_add(1024, SeqCst);
         }
     }
 }
 
-fn copy_from_bytes(e: &mut Sched, bytes: &[u8]) {
+fn parse_comm(comm: [i8; 16]) -> String {
+    use std::ffi::CStr;
+    let s = unsafe {
+        let x: Vec<&str> = CStr::from_ptr(comm[..].as_ptr())
+            .to_str()
+            .unwrap()
+            .split("/")
+            .take(1)
+            .collect();
+        x[0].into()
+    };
+    println!("{}", s);
+    s
+}
+
+#[repr(C)]
+#[derive(Default, Debug, Copy, Clone)]
+struct Event {
+    prev_pid: u64,
+    next_pid: u64,
+    cpu: u64,
+    timestamp: u64,
+    comm: [i8; 16],
+}
+
+impl Event {
+    pub fn to_record(&self) -> Record {
+        Record {
+            timestamp: self.timestamp,
+            data: Data::Sched(Sched {
+                prev_pid: self.prev_pid,
+                next_pid: self.next_pid,
+                comm: parse_comm(self.comm),
+                cpu: self.cpu,
+            }),
+        }
+    }
+}
+
+fn copy_from_bytes(e: &mut Event, bytes: &[u8]) {
     let sz = mem::size_of_val(e);
     if bytes.len() < sz {
         panic!("too few bytes");
     }
     unsafe {
-        let bptr = e as *mut Sched as *mut u8;
+        let bptr = e as *mut Event as *mut u8;
         slice::from_raw_parts_mut(bptr, sz).copy_from_slice(&bytes[..sz]);
     }
 }
 
 fn handler(cpu: i32, bytes: &[u8]) -> i32 {
     let sender = RECORD_SENDER.clone();
-    let mut event = Sched::default();
+    let mut event = Event::default();
     copy_from_bytes(&mut event, bytes);
-    sender.send(event).unwrap();
+    EVENTS.fetch_add(1, SeqCst);
+    sender.send(event.to_record()).unwrap();
     0
 }
 
@@ -105,10 +151,13 @@ fn handle_lost_events(cpu: i32, count: u64) {
     eprintln!("Lost {count} events on CPU {cpu}");
 }
 
-fn attach(target_pid: u32) -> Result<(), libbpf_rs::Error> {
+fn attach(_target_pid: u32) -> Result<(), libbpf_rs::Error> {
+    use core_affinity::{set_for_current, CoreId};
+    assert!(set_for_current(CoreId { id: 61 }));
     let skel_builder = SchedSwitchSkelBuilder::default();
     let mut open_skel = skel_builder.open()?;
-    open_skel.rodata().target_pid = target_pid;
+    //open_skel.rodata().target_pid1 = target_pid;
+    open_skel.rodata().this_pid = std::process::id();
     let mut skel = open_skel.load()?;
     skel.attach()?;
     let perf = PerfBufferBuilder::new(skel.maps_mut().pb())
@@ -120,18 +169,19 @@ fn attach(target_pid: u32) -> Result<(), libbpf_rs::Error> {
     }
 }
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    /// Target pid
-    #[arg(short, long)]
-    pid: u32,
-}
+//#[derive(Parser, Debug)]
+//#[command(version, about, long_about = None)]
+//struct Args {
+//    /// Target pid
+//    #[arg(short, long)]
+//    pid: u32,
+//}
 
 fn main() {
-    let args = Args::parse();
+    //let args = Args::parse();
     bump_memlock_rlimit().unwrap();
     std::thread::spawn(init_counter);
     let _ = RECORD_SENDER.clone();
-    std::thread::spawn(move || attach(args.pid)).join().unwrap();
+    //std::thread::spawn(move || attach(args.pid)).join().unwrap();
+    std::thread::spawn(move || attach(0)).join().unwrap();
 }

@@ -58,12 +58,12 @@ fn set_core_affinity(cpu: usize) {
     assert!(set_for_current(CoreId { id: cpu }));
 }
 
-fn random_core_affinity<const T: usize>() -> usize {
-    let mut rng = thread_rng();
-    let cpu = rng.gen::<usize>() % T;
-    set_core_affinity(cpu);
-    cpu
-}
+//fn random_core_affinity<const T: usize>() -> usize {
+//    let mut rng = thread_rng();
+//    let cpu = rng.gen::<usize>() % T;
+//    set_core_affinity(cpu);
+//    cpu
+//}
 
 //fn init_logging() -> Sender<Record> {
 //    let (tx, rx) = unbounded();
@@ -169,7 +169,7 @@ fn do_work(
     read_ratio: f64,
     min_key: u64,
     max_key: u64,
-    tid: u64,
+    cpu: u64,
     out: Sender<Vec<u8>>,
 ) {
     lazy_static! {
@@ -182,21 +182,30 @@ fn do_work(
     assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 
     let mut rng = thread_rng();
-    set_core_affinity(tid as usize);
-    let mut cpu = tid as u64;
 
     let mut hist: Histogram = Histogram::default();
     let mut hist_timestamp = micros_since_epoch();
     let mut hist_start = Instant::now();
     let bounds = random_idx_bounds(data.len(), &mut rng);
+    let mut tid = std::process::id() as u64;
 
     let mut records = Vec::new();
     let mut flush_counter = 0;
+    let mut in_cpu = true;
+    let mut current_cpu = cpu;
+    set_core_affinity(current_cpu as usize);
     loop {
         let switch_cpu: f64 = rng.gen();
-        //if switch_cpu < 0.3 {
-        //    cpu = random_core_affinity::<12>() as u64;
-        //}
+        if switch_cpu < 0.1 {
+            if in_cpu {
+                current_cpu = cpu + 1;
+                in_cpu = false;
+            } else {
+                current_cpu = cpu;
+                in_cpu = true;
+            }
+            set_core_affinity(current_cpu as usize);
+        }
 
         let key: u64 = rng.gen_range(min_key..max_key);
         let read: bool = rng.gen::<f64>() < read_ratio;

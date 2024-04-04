@@ -1,13 +1,5 @@
 #! /usr/bin/env sh
 
-DATADIR=/nvme/data/tmp/influx
-HTTPHOST=http://127.0.0.1:8080
-RAMBYTES=1073741824
-EXECPOOLBYTES=17179869184
-
-rm -rf $DATADIR
-
-cd influxdb
 #CARGO_PROFILE_RELEASE_DEBUG=true cargo run --release --bin influxdb3 -- \
 #    serve \
 #    --object-store file \
@@ -21,12 +13,16 @@ cd influxdb
 #    --object-store file \
 #    --data-dir $DATADIR
 
+INFLUX_DATADIR=/nvme/data/tmp/influx
+INFLUX_HTTPHOST=http://127.0.0.1:8080
 
+rm -rf $DATADIR
+cd influxdb
 cargo run --release \
     -- run all-in-one \
     --object-store=file \
-    --data-dir $DATADIR \
-    --http-host $HTTPHOST
+    --data-dir $INFLUX_DATADIR \
+    --http-host $INFLUX_HTTPHOST
 
 # In a different terminal, run the following - note the 8081 endpoint
 # cargo run --release -- namespace create vldb_demo  --host http://localhost:8081

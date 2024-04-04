@@ -11,6 +11,7 @@ libc = "0.2"
 clap = { version = "4.3", default-features = false, features = ["std", "derive"] }
 crossbeam = "0.8"
 lazy_static = "1"
+core_affinity = "0.8.1"
 
 common = { path = "../common" }
 

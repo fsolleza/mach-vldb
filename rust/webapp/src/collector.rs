@@ -92,7 +92,7 @@ impl Field {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum FieldValue {
     KVOp(u64),
     KVCpu(u64),
@@ -101,6 +101,7 @@ pub enum FieldValue {
     HistMax(u64),
     HistCnt(u64),
     TS(u64),
+    SchedComm(String),
     None,
 }
 
@@ -234,14 +235,47 @@ fn mach_query_worker(rx: Receiver<MachQuerySpec>) {
 lazy_static! {
     static ref MACH_QUERY_WORKER: Sender<MachQuerySpec> = {
         let (tx, rx) = bounded(100);
-        thread::spawn(move || {
-            mach_query_worker(rx);
-        });
+        for _ in 0..4 {
+            let rx = rx.clone();
+            thread::spawn(move || {
+                mach_query_worker(rx);
+            });
+        }
         tx
     };
 }
 
-pub fn mach_query(
+fn group_by_time_cpu(ts: u64, r: &Record, v: &mut (u64, Vec<FieldValue>)) {
+    let b = ts - ts % 1_000_000;
+    let log = r.data.kv_log().unwrap();
+    v.0 = b;
+    v.1.push(FieldValue::KVCpu(log.cpu as u64));
+}
+
+fn group_by_time_comm(ts: u64, r: &Record, v: &mut (u64, Vec<FieldValue>)) {
+    let b = ts - ts % 1_000_000;
+    let e = r.data.sched().unwrap();
+    v.0 = b;
+    v.1.push(FieldValue::SchedComm(e.comm.clone()));
+}
+
+fn aggregate_func_cnt(r: &Record, o: &mut u64) {
+    *o += 1;
+}
+
+pub fn get_mach_cpu(min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    let now = Instant::now();
+    let x = mach_query(1, min_ts, max_ts, group_by_time_cpu, aggregate_func_cnt);
+    x
+}
+
+pub fn get_mach_sched(min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    let now = Instant::now();
+    let x = mach_query(2, min_ts, max_ts, group_by_time_comm, aggregate_func_cnt);
+    x
+}
+
+fn mach_query(
     source: u64,
     min_ts: u64,
     max_ts: u64,
@@ -263,7 +297,7 @@ fn inner_mach_query(
     grouping_func: fn(u64, &Record, &mut (u64, Vec<FieldValue>)),
     aggregate_func: fn(&Record, &mut u64)
 ) -> HashMap<(u64, Vec<FieldValue>), u64> {
-    println!("Range: {}", max_ts - min_ts);
+    //println!("Range: {}", max_ts - min_ts);
 
     let now = Instant::now();
     let reader = MACH_READER.lock().unwrap().as_ref().unwrap().clone();
@@ -302,7 +336,7 @@ fn inner_mach_query(
         let v = *aggregator.aggregate.get(&group_id).unwrap();
         results.insert(group, v);
     }
-    println!("Iterator style execution {:?}", now.elapsed());
+    //println!("Iterator style execution {:?}", now.elapsed());
     results
 }
 
@@ -390,17 +424,50 @@ impl MachIterator {
     }
 }
 
+async fn do_influx_query(
+    query: String
+) -> Value {
+    // This entire bit is adapted from 
+    // https://github.com/influxdata/influxdb/blob/bb6a5c0bf6968117251617cda99cb39a5274b6dd/influxdb_iox/src/commands/query.rs#L77
+
+
+    let connection: Connection = Builder::default()
+        .build("http://127.0.0.1:8082")
+        .await
+        .unwrap();
+    let mut client = flight::Client::new(connection);
+    client.add_header("bucket", "vldb_demo").unwrap();
+    let mut query_results = client.influxql("vldb_demo", query.clone()).await.unwrap();
+    let mut batches: Vec<_> = (&mut query_results).try_collect().await.unwrap();
+
+    let schema = query_results
+        .inner()
+        .schema()
+        .cloned()
+        .ok_or(influxdb_iox_client::flight::Error::NoSchema).unwrap();
+    batches.push(RecordBatch::new_empty(schema));
+    let formatted_result = QueryOutputFormat::Json.format(&batches).unwrap();
+    let v: Value = serde_json::from_str(&formatted_result).unwrap();
+    v
+}
+
+fn rfc3339_from_micros(ts: u64) -> String {
+    let dt = DateTime::from_timestamp_micros(ts as i64).unwrap();
+    dt.to_rfc3339()
+}
+
 #[derive(Copy, Clone, Debug)]
-struct Item {
+struct InfluxQPSCPU {
     count: u64,
     cpu: u64,
     time: u64,
 }
 
-impl Item {
+impl InfluxQPSCPU {
     fn parse_object(v: &serde_json::Value) -> Self {
+        println!("JSON: {:?}", v);
         let count = v.get("count").unwrap().as_u64().unwrap();
-        let cpu = v.get("cpu").unwrap().as_f64().unwrap() as u64;
+        let cpu = v.get("kv_cpu").unwrap().as_f64().unwrap() as u64;
         let time = {
             let time = v.get("time").unwrap().as_str().unwrap();
             let parse_fmt = "%Y-%m-%dT%H:%M:%S";
@@ -416,137 +483,80 @@ impl Item {
     }
 }
 
-//fn get_influx_cpu_worker(rx: Receiver<(u64, u64, Sender<QueryResult>)>) {
-//    let rt = tokio::runtime::Builder::new_multi_thread()
-//        .worker_threads(64)
-//        .enable_all()
-//        .build()
-//        .unwrap();
-//    let client = influxdb3_client::Client::new("http://127.0.0.1:8181").unwrap();
-//    while let Ok((min_ts, max_ts, tx)) = rx.recv() {
-//        let now = Instant::now();
-//        let r = rt.block_on(async {
-//            let r = inner_get_influx_cpu(min_ts, max_ts, &client).await;
-//            r
-//        });
-//        tx.send(r).unwrap();
-//    }
-//}
-//
-//lazy_static! {
-//    static ref INFLUX_QUERY_WORKER: Sender<(u64, u64, Sender<QueryResult>)> = {
-//        let (tx, rx) = bounded(100);
-//        thread::spawn(move || {
-//            get_influx_cpu_worker(rx);
-//        });
-//        tx
-//    };
-//}
-
 pub async fn get_influx_cpu(
     min_ts: u64,
     max_ts: u64
 ) -> HashMap<(u64, Vec<FieldValue>), u64> {
 
-    let min_formatted = {
-        let dt = DateTime::from_timestamp_micros(min_ts as i64).unwrap();
-        dt.to_rfc3339()
-    };
-    let max_formatted = {
-        let dt = DateTime::from_timestamp_micros(max_ts as i64).unwrap();
-        dt.to_rfc3339()
-    };
+    let min_formatted = rfc3339_from_micros(min_ts);
     let query = format!(
-        "SELECT COUNT(op) FROM kv WHERE time > '{}' GROUP BY time(1s),cpu fill(none)",
+        "SELECT COUNT(kv_op) FROM table_kv WHERE time > '{}' AND source = 'kv' GROUP BY time(1s),kv_cpu fill(none)",
         min_formatted
     );
-    println!("Query: {}", query);
-
-    let now = Instant::now();
-
-    // This entire bit is adapted from 
-    // https://github.com/influxdata/influxdb/blob/bb6a5c0bf6968117251617cda99cb39a5274b6dd/influxdb_iox/src/commands/query.rs#L77
-
-    let connection = Builder::default()
-        .build("http://127.0.0.1:8082")
-        .await
-        .unwrap();
-    let mut client = flight::Client::new(connection);
-    client.add_header("bucket", "vldb_demo").unwrap();
-    let mut query_results = client.influxql("vldb_demo", query.clone()).await.unwrap();
-    let mut batches: Vec<_> = (&mut query_results).try_collect().await.unwrap();
-    println!("Influx query {} took: {:?}", query, now.elapsed());
-
-    let schema = query_results
-        .inner()
-        .schema()
-        .cloned()
-        .ok_or(influxdb_iox_client::flight::Error::NoSchema).unwrap();
-    batches.push(RecordBatch::new_empty(schema));
-    let formatted_result = QueryOutputFormat::Json.format(&batches).unwrap();
-
-    let v: Value = serde_json::from_str(&formatted_result).unwrap();
-
+    let v = do_influx_query(query).await;
     let mut map = HashMap::new();
-
     let arr = v.as_array().unwrap();
     for item in arr {
-        let parsed_item = Item::parse_object(item);
+        let parsed_item = InfluxQPSCPU::parse_object(item);
         let key = {
             let group = vec![FieldValue::KVCpu(parsed_item.cpu)];
             (parsed_item.time, group)
         };
         map.insert(key, parsed_item.count);
     }
-
     map
 }
 
-//async fn inner_get_influx_cpu(
-//    min_ts: u64,
-//    max_ts: u64,
-//    client: &influxdb3_client::Client
-//) -> HashMap<(u64, Vec<FieldValue>), u64> {
-//
-//    let min_formatted = {
-//        let dt = DateTime::from_timestamp_micros(min_ts as i64).unwrap();
-//        dt.to_rfc3339()
-//    };
-//    let max_formatted = {
-//        let dt = DateTime::from_timestamp_micros(max_ts as i64).unwrap();
-//        dt.to_rfc3339()
-//    };
-//    let query = format!(
-//        "SELECT * FROM kv WHERE time > '{}'",
-//        min_formatted
-//    );
-//    println!("Query: {}", query);
-//
-//    let now = Instant::now();
-//    let mut resp_bytes = client
-//        .api_v3_query_sql("vldb-demo", query.clone())
-//        .format(influxdb3_client::Format::Json) // could be Json
-//        .send()
-//        .await
-//        .unwrap();
-//    println!("Influx query {} took: {:?}", query, now.elapsed());
-//
-//    let data: &str = std::str::from_utf8(&resp_bytes).unwrap();
-//    let v: Value = serde_json::from_str(data).unwrap();
-//
-//    //let arr = v.as_array().unwrap();
-//    let mut map = HashMap::new();
-//    //for item in arr {
-//    //    let parsed_item = Item::parse_object(item);
-//    //    let key = {
-//    //        let group = vec![FieldValue::KVCpu(parsed_item.cpu)];
-//    //        (parsed_item.time, group)
-//    //    };
-//    //    map.insert(key, parsed_item.count);
-//    //}
-//    map
-//}
+#[derive(Clone, Debug)]
+struct InfluxSchedComm {
+    count: u64,
+    comm: String,
+    time: u64,
+}
 
+impl InfluxSchedComm {
+    fn parse_object(v: &serde_json::Value) -> Self {
+        println!("JSON: {:?}", v);
+        let count = v.get("count").unwrap().as_u64().unwrap();
+        let comm: String = v.get("sched_comm").unwrap().as_str().unwrap().into();
+        let time = {
+            let time = v.get("time").unwrap().as_str().unwrap();
+            let parse_fmt = "%Y-%m-%dT%H:%M:%S";
+            let p = NaiveDateTime::parse_from_str(time, parse_fmt).unwrap();
+            p.and_utc().timestamp_micros() as u64
+        };
+
+        Self {
+            count,
+            comm,
+            time
+        }
+    }
+}
+
+pub async fn get_influx_sched(
+    min_ts: u64,
+    max_ts: u64
+) -> HashMap<(u64, Vec<FieldValue>), u64> {
+
+    let min_formatted = rfc3339_from_micros(min_ts);
+    let query = format!(
+        "SELECT COUNT(sched_cpu) FROM table_kv WHERE time > '{}' AND source = 'sched' GROUP BY time(1s),sched_comm fill(none)",
+        min_formatted
+    );
+    let v = do_influx_query(query).await;
+    let mut map = HashMap::new();
+    let arr = v.as_array().unwrap();
+    for item in arr {
+        let parsed_item = InfluxSchedComm::parse_object(item);
+        let key = {
+            let group = vec![FieldValue::SchedComm(parsed_item.comm)];
+            (parsed_item.time, group)
+        };
+        map.insert(key, parsed_item.count);
+    }
+    map
+}
 
 fn filter(data: Vec<Record>) -> Arc<[Record]> {
     let mut v = Vec::new();
@@ -622,28 +632,38 @@ fn make_lp_bytes(samples: &[Record], time_micros: u64) -> Vec<u8> {
     for r in samples {
         write!(&mut buf, "{}", tuple_ids);
         tuple_ids += 1;
-        match r.data {
-            Data::Sched(x) => panic!("Unimplmented line protocol"),
+        match &r.data {
                 Data::Hist(x) => {
                     lp = lp
-                        .measurement("hist")
-                        .tag("source","hist")
-                        .tag("id", &buf)
-                        .field("max",x.max)
-                        .field("ts",r.timestamp)
+                        .measurement("table_hist")
+                        .tag("hist_source","hist")
+                        .tag("hist_id", &buf)
+                        .field("hist_max",x.max)
+                        .field("hist_ts",r.timestamp)
                         .timestamp(time_nanos)
                         .close_line();
                 },
                 Data::KV(x) => {
                     lp = lp
-                        .measurement("kv")
+                        .measurement("table_kv")
                         .tag("source","kv")
                         .tag("id", &buf)
-                        .field("op", x.op as u64)
-                        .field("cpu", x.cpu)
-                        .field("tid", x.tid)
-                        .field("dur_nanos", x.dur_nanos)
-                        .field("ts",r.timestamp)
+                        .field("kv_op", x.op as u64)
+                        .field("kv_cpu", x.cpu)
+                        .field("kv_tid", x.tid)
+                        .field("kv_dur_nanos", x.dur_nanos)
+                        .field("kv_ts",r.timestamp)
+                        .timestamp(time_nanos)
+                        .close_line();
+                },
+                Data::Sched(x) => {
+                    lp = lp
+                        .measurement("table_kv")
+                        .tag("source","sched")
+                        .tag("id", &buf)
+                        .field("sched_cpu", x.cpu as u64)
+                        .field("sched_comm", x.comm.as_str())
+                        .field("sched_ts",r.timestamp)
                         .timestamp(time_nanos)
                         .close_line();
                 },
@@ -663,11 +683,11 @@ fn init_influx_sink(rx: Receiver<Arc<[Record]>>) {
         loop {
             let count = INFLUX_COUNT.load(SeqCst);
             let drop = INFLUX_DROP.load(SeqCst);
-            println!(
-                "Influx Count {}\t Drop {}",
-                count-last_count,
-                drop-last_drop
-            );
+            //println!(
+            //    "Influx Count {}\t Drop {}",
+            //    count-last_count,
+            //    drop-last_drop
+            //);
             INFLUX_COUNT_PER_SEC.swap(count - last_count, SeqCst);
             INFLUX_DROPS_PER_SEC.swap(drop - last_drop, SeqCst);
             last_count = count;
@@ -719,11 +739,11 @@ fn init_mach_sink(mut mach: Mach, rx: Receiver<Arc<[Record]>>) {
         loop {
             let count = MACH_COUNT.load(SeqCst);
             let drop = MACH_DROP.load(SeqCst);
-            println!(
-                "Mach Count {}\t Drop {}",
-                count-last_count,
-                drop-last_drop
-            );
+            //println!(
+            //    "Mach Count {}\t Drop {}",
+            //    count-last_count,
+            //    drop-last_drop
+            //);
             MACH_COUNT_PER_SEC.swap(count-last_count, SeqCst);
             MACH_DROPS_PER_SEC.swap(drop-last_drop, SeqCst);
             last_count = count;

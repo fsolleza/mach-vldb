@@ -3,7 +3,7 @@
 mod collector;
 
 use axum::{
-    extract::Json,
+    extract::{State, Json},
     response::{Html, IntoResponse},
     routing::{post, get},
     Router
@@ -21,21 +21,24 @@ use common::data::{Record, micros_since_epoch};
 use lazy_static::*;
 use std::cmp::Reverse;
 use collector::*;
+use tokio::sync::mpsc;
 
 fn main() {
-    let h = thread::spawn(move || {
-        let builder = runtime::Builder::new_multi_thread()
+    let mut handles = Vec::new();
+    handles.push(thread::spawn(move || {
+        let builder = runtime::Builder::new_current_thread()
             .worker_threads(64)
             .enable_all()
             .build()
             .unwrap();
         builder.block_on(async {
-            println!("HERE");
             web_server().await;
         });
-    });
+    }));
     collector::init_collector();
-    h.join().unwrap();
+    for h in handles {
+        h.join().unwrap();
+    }
 }
 
 #[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
@@ -45,7 +48,7 @@ struct ScatterRequest {
     max_ts_millis: u64,
 }
 
-#[derive(PartialEq, Eq, Deserialize, Debug, Clone)]
+#[derive(PartialEq, Eq, Deserialize, Debug, Clone, Hash)]
 struct ScatterLine {
     source: String,
     agg: String,
@@ -96,7 +99,6 @@ fn group_by_time_cpu(ts: u64, r: &Record, v: &mut (u64, Vec<FieldValue>)) {
     v.1.push(FieldValue::KVCpu(log.cpu as u64));
 }
 
-
 fn aggregate_func_cnt(r: &Record, o: &mut u64) {
     *o += 1;
 }
@@ -104,6 +106,7 @@ fn aggregate_func_cnt(r: &Record, o: &mut u64) {
 fn source_to_int(s: &str) -> u64 {
     if s == "hist" { return 0; }
     if s == "kv" { return 1; }
+    if s == "sched" { return 2; }
     panic!("Unhandled source");
 }
 
@@ -115,7 +118,6 @@ async fn web_server() {
         .route("/influxHandler", post(influxHandler))
         .route("/histogram", post(get_histogram_handler))
         .route("/setCollection", post(set_collection_handler));
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .unwrap();
@@ -182,13 +184,31 @@ struct Cached {
     max_ts: u64,
 }
 
-fn mach_cache_merge_update(
-    mut new: QueryResult,
+impl Cached {
+    fn new_empty() -> Self {
+        Self {
+            result: HashMap::new(),
+            min_ts: u64::MAX,
+            max_ts: u64::MAX
+        }
+    }
+}
+
+fn cache_merge_update(
+    cache: &mut HashMap<ScatterLine, Cached>,
+    query: &ScatterLine,
+    new: &mut QueryResult,
     min_ts: u64,
     max_ts: u64
-) -> QueryResult {
-    let mut guard = MACH_CACHED.lock().unwrap();
-    for (k, v) in &guard.result {
+) {
+    //let mut guard = MACH_CACHED.lock().unwrap();
+    let mut map = match cache.get_mut(query) {
+        Some(x) => x,
+        None => {
+            cache.entry(query.clone()).or_insert_with(Cached::new_empty)
+        },
+    };
+    for (k, v) in &map.result {
         if k.0 >= min_ts && k.0 <= max_ts {
             if let Some(x) = new.get_mut(k) {
                 *x = (*x).max(*v);
@@ -197,118 +217,114 @@ fn mach_cache_merge_update(
             }
         }
     }
-    guard.result = new.clone();
-    guard.min_ts = min_ts;
-    guard.max_ts = max_ts;
-    new
+    map.result = new.clone();
+    map.min_ts = min_ts;
+    map.max_ts = max_ts;
 }
-
-fn influx_cache_merge_update(
-    mut new: QueryResult,
-    min_ts: u64,
-    max_ts: u64
-) -> QueryResult {
-    let mut guard = INFLUX_CACHED.lock().unwrap();
-    for (k, v) in &guard.result {
-        if k.0 >= min_ts && k.0 <= max_ts {
-            if let Some(x) = new.get_mut(k) {
-                *x = (*x).max(*v);
-            } else {
-                new.insert(k.clone(), *v);
-            }
-        }
-    }
-    guard.result = new.clone();
-    guard.min_ts = min_ts;
-    guard.max_ts = max_ts;
-    new
-}
-
 
 lazy_static! {
-    static ref MACH_CACHED: Mutex<Cached> = {
-        Mutex::new(Cached {
-            result: HashMap::new(),
-            min_ts: u64::MAX,
-            max_ts: u64::MAX
-        })
+    static ref MACH_CACHED: Mutex<HashMap<ScatterLine, Cached>> = {
+        Mutex::new(HashMap::new())
     };
-    static ref INFLUX_CACHED: Mutex<Cached> = {
-        Mutex::new(Cached {
-            result: HashMap::new(),
-            min_ts: u64::MAX,
-            max_ts: u64::MAX
-        })
+    static ref INFLUX_CACHED: Arc<tokio::sync::Mutex<HashMap<ScatterLine, Cached>>> = {
+        Arc::new(tokio::sync::Mutex::new(HashMap::new()))
     };
 }
 
-static MACH_LAST_MAX: AtomicU64 = AtomicU64::new(0);
-static INFLUX_LAST_MAX: AtomicU64 = AtomicU64::new(0);
+async fn get_influx_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    let now = Instant::now();
+    let r = if line.source == "kv" && line.field == "kvdur" && line.agg == "count" {
+        let r = get_influx_cpu(min_ts, max_ts).await;
+        println!("Influx get cpu ops: {:?}", now.elapsed());
+        r
+    } else if line.source == "sched" && line.field == "schedcpu" && line.agg == "count" {
+        let r = get_influx_sched(min_ts, max_ts).await;
+        println!("Influx get sched: {:?}", now.elapsed());
+        r
+    } else {
+        panic!("Unhandled line {:?}", line);
+    };
+    r
+}
+
+
+async fn influx_worker(mut rx: mpsc::Receiver<(ScatterRequest, mpsc::Sender<ScatterResponse>)>) {
+    while let Some((req, tx)) = rx.recv().await {
+    }
+}
 
 async fn influxHandler(
     msg: Json<ScatterRequest>,
 ) -> impl IntoResponse {
+        let Json(req) = msg;
+        let min_ts = req.min_ts_millis * 1000;
+        let max_ts = req.max_ts_millis * 1000;
+        let influx_cached = INFLUX_CACHED.clone();
+        let mut cache = influx_cached.lock().await;
 
-    let now = Instant::now();
-
-    let Json(req) = msg;
-
-    let min_ts = req.min_ts_millis * 1000;
-    let max_ts = req.max_ts_millis * 1000;
-
-    let last_max = INFLUX_LAST_MAX.load(SeqCst);
-    let truncated_min_ts = {
-        if last_max == 0 {
-            max_ts - 1_000_000
-        } else {
-            last_max - 1_000_000
-        }
-    };
-    INFLUX_LAST_MAX.store(max_ts, SeqCst);
-
-    let mut result = Vec::new();
-    for line in req.lines.iter() {
-        let interm = {
-            let r = get_influx_cpu(truncated_min_ts, max_ts).await;
-            influx_cache_merge_update(r, min_ts, max_ts)
-        };
-        let mut map: HashMap<Vec<FieldValue>, Vec<Point>> = HashMap::new();
-        for ((ts, group), val) in interm {
-            map.entry(group)
-                .or_insert_with(Vec::new)
-                .push(Point { x: ts, y: val });
-        }
-        for (g, v) in map.iter_mut() {
-            v.sort_by_key(|p| std::cmp::Reverse(p.x));
-        }
-        result.push(map);
-    }
-
-    let mut series = Vec::new();
-    for r in result { // 0..query.series.len() {
-        //let q = &query.series[i];
-        //let r = &result[i];
-        for (k, v) in r.iter() {
-            let mut group = String::new();
-            for g in k.iter() {
-                group.push_str(&format!("{}, ", g.as_string()));
-            }
-            let mut data: Vec<ScatterPoint> = v.iter().map(|x| ScatterPoint {
-                x: x.x / 1_000,
-                y: x.y
-            }).collect();
-            data.sort_by_key(|k| k.x);
-            let ser = ScatterSeries {
-                source: group,
-                data,
+        let mut result = Vec::new();
+        for line in req.lines.iter() {
+            let truncated_min_ts = match cache.get(line) {
+                Some(m) => m.max_ts - 1_000_000,
+                None => max_ts - 1_000_000,
             };
-            series.push(ser);
+            let interm = {
+                let mut r = get_influx_data(line, truncated_min_ts, max_ts).await;
+                cache_merge_update(&mut *cache, line, &mut r, min_ts, max_ts);
+                r
+            };
+            let mut map: HashMap<Vec<FieldValue>, Vec<Point>> = HashMap::new();
+            for ((ts, group), val) in interm {
+                map.entry(group)
+                    .or_insert_with(Vec::new)
+                    .push(Point { x: ts, y: val });
+            }
+            for (g, v) in map.iter_mut() {
+                v.sort_by_key(|p| std::cmp::Reverse(p.x));
+            }
+            result.push(map);
         }
-    }
-    series.sort_by(|a, b| a.source.cmp(&b.source));
 
-    let response = ScatterResponse { data: series };
-    Json(response)
+        let mut series = Vec::new();
+        for r in result { // 0..query.series.len() {
+            //let q = &query.series[i];
+            //let r = &result[i];
+            for (k, v) in r.iter() {
+                let mut group = String::new();
+                for g in k.iter() {
+                    group.push_str(&format!("{}, ", g.as_string()));
+                }
+                let mut data: Vec<ScatterPoint> = v.iter().map(|x| ScatterPoint {
+                    x: x.x / 1_000,
+                    y: x.y
+                }).collect();
+                data.sort_by_key(|k| k.x);
+                let ser = ScatterSeries {
+                    source: group,
+                    data,
+                };
+                series.push(ser);
+            }
+        }
+        series.sort_by(|a, b| a.source.cmp(&b.source));
+        let response = ScatterResponse { data: series };
+        Json(response)
+}
+
+fn get_mach_data(line: &ScatterLine, min_ts: u64, max_ts: u64) -> HashMap<(u64, Vec<FieldValue>), u64> {
+    let now = Instant::now();
+    let r = if line.source == "kv" && line.field == "kvdur" && line.agg == "count" {
+        let r = get_mach_cpu(min_ts, max_ts);
+        println!("Mach get cpu ops: {:?}", now.elapsed());
+        r
+    } else if line.source == "sched" && line.field == "schedcpu" && line.agg == "count" {
+        let r = get_mach_sched(min_ts, max_ts);
+        println!("Mach get sched: {:?}", now.elapsed());
+        r
+    } else {
+        panic!("Unhandled line {:?}", line);
+    };
+    r
 }
 
 async fn machHandler(
@@ -321,29 +337,19 @@ async fn machHandler(
 
     let min_ts = req.min_ts_millis * 1000;
     let max_ts = req.max_ts_millis * 1000;
-
-    let last_max = MACH_LAST_MAX.load(SeqCst);
-    let truncated_min_ts = {
-        if last_max == 0 {
-            max_ts - 1_000_000
-        } else {
-            last_max - 1_000_000
-        }
-    };
-    MACH_LAST_MAX.store(max_ts, SeqCst);
+    let mut cache = MACH_CACHED.lock().unwrap();
 
     let mut result = Vec::new();
     for line in req.lines.iter() {
-        let source = source_to_int(line.source.as_str());
+
+        let truncated_min_ts = match cache.get(line) {
+            Some(m) => m.max_ts - 1_000_000,
+            None => max_ts - 1_000_000,
+        };
         let interm = {
-            let r = mach_query(
-                source,
-                truncated_min_ts,
-                max_ts,
-                group_by_time_cpu,
-                aggregate_func_cnt
-            );
-            mach_cache_merge_update(r, min_ts, max_ts)
+            let mut r = get_mach_data(line, truncated_min_ts, max_ts);
+            cache_merge_update(&mut *cache, line, &mut r, min_ts, max_ts);
+            r
         };
         let mut map: HashMap<Vec<FieldValue>, Vec<Point>> = HashMap::new();
         for ((ts, group), val) in interm {
@@ -384,65 +390,3 @@ async fn machHandler(
     let response = ScatterResponse { data: series };
     Json(response)
 }
-
-    //let mut cached = CACHED.lock().unwrap();
-
-    //let mut adjusted_req = req.clone();
-    //adjusted_req.min_ts_millis = adjusted_req.max_ts_millis - 3000;
-    //let mut repeated = false;
-
-    // Adjust query if repeated and there's a cache
-    //if let Some(x) = cached.as_mut() {
-    //    if adjusted_req.is_repeat(&x.request) {
-    //        repeated = true;
-    //        adjusted_req.min_ts_millis = x.request.max_ts_millis - 1;
-    //    }
-    //}
-
-    //let query = adjusted_req.to_query();
-    //let mut result: Vec<HashMap<Vec<FieldValue>, Vec<Point>>> = query.execute();
-
-    // Merge results if repeated
-    //if repeated {
-
-    //    let req_min_ts = req.min_ts_millis * 1000;
-    //    let cached_result = cached.as_ref().unwrap().result.clone();
-
-    //    for i in 0..result.len() {
-    //        let r = &mut result[i];
-    //        let c = &cached_result[i];
-
-    //        for (key, vec) in r.iter_mut() {
-
-    //            let mut min_ts = u64::MAX;
-    //            for item in vec.iter() {
-    //                if min_ts > item.x { min_ts = item.x; }
-    //            }
-    //            let cached_vec = c.get(key).unwrap();
-    //            //println!("Result vec {:?}", vec);
-    //            for j in 0..cached_vec.len() {
-    //                let cached_val = &cached_vec[j];
-    //                if cached_val.x < min_ts && cached_val.x > req_min_ts {
-    //                    vec.push(*cached_val);
-    //                }
-    //            }
-    //        }
-    //    }
-    //}
-
-    // Ensure every vector is sorted by decreasing time
-    //for map in result.iter_mut() {
-    //    for (k, vec) in map.iter_mut() {
-    //        vec.sort_by_key(|x| std::cmp::Reverse(x.x))
-    //    }
-    //}
-
-    // Cache this result, replacing the cached one
-    //{
-    //    let to_cache = Cached {
-    //        result: Arc::new(result.clone()),
-    //        request: req,
-    //    };
-    //    *cached = Some(to_cache);
-    //}
-

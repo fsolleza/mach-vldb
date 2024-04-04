@@ -20,15 +20,15 @@ a.canvasjs-chart-credit {
 </p>
 
 <p>
+Enable Source Collection
 <input type="checkbox" id="sourceKV"> Collect KV Logs<br>
 <input type="checkbox" id="sourceSched"> Collect Sched Events<br>
-<input type="button" value="Set data collection" id="enableSource">
 </p>
 
 <p>
 Choose Y Axis (KV store operations) <br>
-<input type="radio" name="setYValue" id="qps"> Operations per Sec (OPS) <br>
-<input type="radio" name="setYValue" id="lat"> Max Latency per Sec (LPS)
+<input type="checkbox" name="setYValue" id="qps"> Operations per Sec (OPS) <br>
+<input type="checkbox" name="setYValue" id="lat"> Max Latency per Sec (LPS)
 </p>
 
 <p>
@@ -36,6 +36,17 @@ Choose Y Axis groupings <br>
 <input type="checkbox" name="setYGroup" value="kvcpu"> CPU <br>
 <input type="checkbox" name="setYGroup" value="kvtid"> TID <br>
 <input type="checkbox" name="setYGroup" value="kvop"> Read / Write
+</p>
+
+<p>
+Choose Y2 Axis (Scheduler Events) <br>
+<input type="checkbox" name="setYValue" id="sched"> Scheduler Events <br>
+</p>
+
+<p>
+Choose Y2 Axis groupings <br>
+<input type="checkbox" name="setYGroup" value="schedcomm"> Command <br>
+<input type="checkbox" name="setYGroup" value="schedcpu"> CPU <br>
 </p>
 
 <p>
@@ -89,12 +100,14 @@ var plotD = new CanvasJS.Chart("plotD", {
 })
 
 var plotA = new CanvasJS.Chart("plotA", {
+
     title: {
         text: "Pre-aggregated Summary Stats",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
     },
+
 	axisX: [{
         interval: 10,
         intervalType: "second",
@@ -105,6 +118,7 @@ var plotA = new CanvasJS.Chart("plotA", {
         labelFontSize: 14,
         lineColor: "#ddd",
 	}],
+
 	axisY:{
         title: "QPS",
 		includeZero: true,
@@ -114,17 +128,20 @@ var plotA = new CanvasJS.Chart("plotA", {
         labelPlacement: "inside", //Change it to "outside"
         gridColor: "#ddd"
 	},
+
     width: 800,
 	data: []
 })
 
 var plotB = new CanvasJS.Chart("plotB", {
+
     title: {
         text: "Mach",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
     },
+
 	axisX: [{
         interval: 1,
         intervalType: "second",
@@ -138,6 +155,7 @@ var plotB = new CanvasJS.Chart("plotB", {
             return " ";
         }
 	}],
+
 	axisY:{
         title: "QPS",
 		includeZero: true,
@@ -147,17 +165,38 @@ var plotB = new CanvasJS.Chart("plotB", {
         labelPlacement: "inside", //Change it to "outside"
         gridColor: "#ddd"
 	},
+
+	axisY2:{
+        title: "Scheduler Events",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        visible: false,
+        gridColor: "#ddd",
+        minimum: 0,
+        maximum: 50,
+        title: "",
+        tickThickness: 0,
+        lineThickness: 0,
+        labelFormatter: function(){
+           return " ";
+        },
+	},
     width: 800,
 	data: []
 });
 
 var plotC = new CanvasJS.Chart("plotC", {
+
     title: {
         text: "InfluxDB",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
     },
+
 	axisX: [{
         interval: 1,
         intervalType: "second",
@@ -171,6 +210,7 @@ var plotC = new CanvasJS.Chart("plotC", {
             return " ";
         }
 	}],
+
 	axisY:{
         title: "QPS",
 		includeZero: true,
@@ -180,6 +220,26 @@ var plotC = new CanvasJS.Chart("plotC", {
         labelPlacement: "inside", //Change it to "outside"
         gridColor: "#ddd",
 	},
+
+	axisY2:{
+        title: "Scheduler Events",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        visible: false,
+        gridColor: "#ddd",
+        minimum: 0,
+        maximum: 50,
+        title: "",
+        tickThickness: 0,
+        lineThickness: 0,
+        labelFormatter: function(){
+           return " ";
+        },
+	},
+
     width: 800,
 	data: []
 });
@@ -190,7 +250,6 @@ function isPaused() {
 }
 
 function updatePlotA(points, min_ts, max_ts) {
-    console.log("Updating plot A with points", points);
     var newData = []
     newData.push({
 		type: "line",
@@ -201,8 +260,6 @@ function updatePlotA(points, min_ts, max_ts) {
 		dataPoints: points
 	})
     plotA.options.data = newData;
-    plotA.options.axisX[0].maximum = max_ts;
-    plotA.options.axisX[0].minimum = min_ts;
 }
 
 function updatePlotBHistogram(points, min_ts, max_ts, visible) {
@@ -221,8 +278,6 @@ function updatePlotBHistogram(points, min_ts, max_ts, visible) {
         plotB.options.data = newData;
     }
     plotB.options.data[0].visible = visible;
-    plotB.options.axisX[0].maximum = max_ts;
-    plotB.options.axisX[0].minimum = min_ts;
 }
 
 function updatePlotCHistogram(points, min_ts, max_ts, visible) {
@@ -241,12 +296,9 @@ function updatePlotCHistogram(points, min_ts, max_ts, visible) {
         plotC.options.data = newData;
     }
     plotC.options.data[0].visible = visible;
-    plotC.options.axisX[0].maximum = max_ts;
-    plotC.options.axisX[0].minimum = min_ts;
 }
 
 function updatePlotB(newData, min_ts, max_ts) {
-    console.log("New data: ", newData);
     var data = newData.data;
 
     // First data is always the histogram
@@ -256,22 +308,30 @@ function updatePlotB(newData, min_ts, max_ts) {
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
-        newScatterData.push({
+        var item = {
 	    	type: "line",
 	    	name: source,
 	    	showInLegend: true,
             xValueType: "dateTime",
 	    	xValueFormatString: "hh:mm",
 	    	dataPoints: sourceData
-	    })
+	    };
+        var grey = new Set();
+        grey.add("KVCpu(5), ");
+        grey.add("KVCpu(7), ");
+        grey.add("KVCpu(9), ");
+        if (grey.has(source)) {
+            item["lineColor"] = "grey";
+            item["color"] = "grey";
+            item["lineDashType"] = "dot";
+            item["markerType"] = "none";
+        }
+        newScatterData.push(item);
     }
     plotB.options.data = newScatterData;
-    plotB.options.axisX[0].maximum = max_ts;
-    plotB.options.axisX[0].minimum = min_ts;
 }
 
 function updatePlotC(newData, min_ts, max_ts) {
-    console.log("New data: ", newData);
     var data = newData.data;
 
     // First data is always the histogram
@@ -281,26 +341,34 @@ function updatePlotC(newData, min_ts, max_ts) {
     for (i = 0; i < data.length; i++) {
         var source = data[i].source;
         var sourceData = data[i].data;
-        newScatterData.push({
+        var item = {
 	    	type: "line",
 	    	name: source,
 	    	showInLegend: true,
             xValueType: "dateTime",
 	    	xValueFormatString: "hh:mm",
 	    	dataPoints: sourceData
-	    })
+	    };
+        var grey = new Set();
+        grey.add("KVCpu(5), ");
+        grey.add("KVCpu(7), ");
+        grey.add("KVCpu(9), ");
+        if (grey.has(source)) {
+            item["lineColor"] = "grey";
+            item["color"] = "grey";
+            item["lineDashType"] = "dot";
+            item["markerType"] = "none";
+        }
+        newScatterData.push(item);
     }
     plotC.options.data = newScatterData;
-    plotC.options.axisX[0].maximum = max_ts;
-    plotC.options.axisX[0].minimum = min_ts;
 }
 
-function updateHistogram(min_ts, max_ts, shouldRender) {
+function updateHistogram(min_ts, max_ts) {
     var request = JSON.stringify({
         max_ts_millis: max_ts,
         min_ts_millis: min_ts
     });
-    console.log(request);
 
     var e = document.getElementById("hideHist");
     var visible = !e.checked;
@@ -316,86 +384,292 @@ function updateHistogram(min_ts, max_ts, shouldRender) {
     fetch(request)
         .then(data => data.json())
         .then(data => {
-            console.log("Result", data);
             updatePlotA(data, min_ts, max_ts);
             updatePlotBHistogram(data, min_ts, max_ts, visible);
             updatePlotCHistogram(data, min_ts, max_ts, visible);
-            if (shouldRender) {
-                plotA.render();
-                plotB.render();
-                plotC.render();
-            }
         });
 }
 
-function updatePlots() {
-    plotA.render();
-    plotB.render();
-    plotC.render();
+function updateY1(plot, newData) {
+    var data = newData.data;
 
-    var max = Date.now() - 1000;
-    var min = max - (1000 * 60); // in millis
+    // First data is always the histogram
+    var newScatterData = [];
+    newScatterData.push(plot.options.data[0]);
 
-    updateHistogram(min, max, dataRequests.length == 0);
+    for (i = 0; i < data.length; i++) {
+        var source = data[i].source;
+        var sourceData = data[i].data;
+        var item = {
+	    	type: "line",
+            axisYType: "primary",
+	    	name: source,
+	    	showInLegend: true,
+            xValueType: "dateTime",
+	    	xValueFormatString: "hh:mm",
+	    	dataPoints: sourceData,
+            markerType: "none",
+	    };
+        var grey = new Set();
+        grey.add("KVCpu(5), ");
+        grey.add("KVCpu(7), ");
+        grey.add("KVCpu(9), ");
+        if (grey.has(source)) {
+            item["lineColor"] = "grey";
+            item["color"] = "grey";
+            item["lineDashType"] = "dot";
+        }
+        newScatterData.push(item);
+    }
+    for (i = 0; i < plot.options.data.length; i++) {
+        var d = plot.options.data[i];
+        if (d.axisYType === "secondary") {
+            newScatterData.push(d);
+        }
+    }
+    plot.options.data = newScatterData;
+}
 
-    if (dataRequests.length > 0) {
-        var req = JSON.stringify({
-            lines: dataRequests,
-            max_ts_millis: max,
-            min_ts_millis: min,
+function getPlotXRange(plot) {
+    return {
+        max: plot.options.axisX[0].maximum,
+        min: plot.options.axisX[0].minimum,
+    };
+}
+
+function updateY2(plot, newData) {
+    var data = newData.data;
+
+    // First data is always the histogram
+    var newScatterData = [];
+    newScatterData.push(plot.options.data[0]);
+
+    for (i = 0; i < data.length; i++) {
+        var source = data[i].source;
+        if (source == 'SchedComm("matmul-workload"), ') {
+            var tmpSourceData = data[i].data;
+            var sourceData = [];
+
+            // write label
+            for (j = 0; j < tmpSourceData.length; j++) {
+                if (tmpSourceData[j].y < 50) {
+                    var dataItem = {
+                        x: tmpSourceData[j].x,
+                        y: tmpSourceData[j].y,
+                        indexLabel: '' + tmpSourceData[j].y,
+                    };
+                    sourceData.push(dataItem);
+                }
+            }
+
+            var item = {
+	        	type: "scatter",
+                axisYType: "secondary",
+	        	name: source,
+	        	showInLegend: true,
+                xValueType: "dateTime",
+	        	xValueFormatString: "hh:mm",
+	        	dataPoints: sourceData,
+                markerType: "triangle",
+                markerSize: 10,
+	        };
+
+            var grey = new Set();
+            grey.add("KVCpu(5), ");
+            grey.add("KVCpu(7), ");
+            grey.add("KVCpu(9), ");
+            if (grey.has(source)) {
+                item["lineColor"] = "grey";
+                item["color"] = "grey";
+                item["lineDashType"] = "dot";
+            }
+            newScatterData.push(item);
+        }
+    }
+
+    for (i = 0; i < plot.options.data.length; i++) {
+        var d = plot.options.data[i];
+        if (d.axisYType === "primary") {
+            newScatterData.push(d);
+        }
+    }
+    plot.options.data = newScatterData;
+}
+
+function updateOpsPerSec(min_ts, max_ts) {
+    var request = [
+        {
+            source: "kv",
+            field: "kvdur",
+            group: ["kvcpu"],
+            agg: "count",
+        }
+    ];
+    var req = JSON.stringify({
+        lines: request,
+        max_ts_millis: max_ts,
+        min_ts_millis: min_ts,
+    });
+
+    {
+        var request = new Request("http://localhost:3000/machHandler", {
+            method: 'POST',
+            body: req,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+        fetch(request)
+            .then(data => data.json())
+            .then(data => {
+                updateY1(plotB, data);
+            });
+    }
+
+    {
+        var request = new Request("http://localhost:3000/influxHandler", {
+            method: 'POST',
+            body: req,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
         });
 
-        {
-            var request = new Request("http://localhost:3000/machHandler", {
-                method: 'POST',
-                body: req,
-                headers: new Headers({
-                    'Content-Type': 'application/json'
-                })
+        fetch(request)
+            .then(data => data.json())
+            .then(data => {
+                updateY1(plotC, data);
             });
+    }
+}
 
-            fetch(request)
-                .then(data => data.json())
-                .then(data => {
-                    updatePlotB(data, min, max);
-                });
-        }
-
-
+function updateSchedEventsPerSec(min_ts, max_ts) {
+    var request = [
         {
-            var request = new Request("http://localhost:3000/influxHandler", {
-                method: 'POST',
-                body: req,
-                headers: new Headers({
-                    'Content-Type': 'application/json'
-                })
-            });
-
-            fetch(request)
-                .then(data => data.json())
-                .then(data => {
-                    updatePlotC(data, min, max);
-                });
+            source: "sched",
+            field: "schedcpu",
+            group: ["schedcomm"],
+            agg: "count",
         }
+    ];
+    var req = JSON.stringify({
+        lines: request,
+        max_ts_millis: max_ts,
+        min_ts_millis: min_ts,
+    });
+
+    {
+        var request = new Request("http://localhost:3000/machHandler", {
+            method: 'POST',
+            body: req,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+        fetch(request)
+            .then(data => data.json())
+            .then(data => {
+                console.log("Mach scheduler data", data);
+                updateY2(plotB, data);
+            });
+    }
+
+    {
+        var request = new Request("http://localhost:4000/influxHandler", {
+            method: 'POST',
+            body: req,
+            headers: new Headers({
+                'Content-Type': 'application/json'
+            })
+        });
+
+        fetch(request)
+            .then(data => data.json())
+            .then(data => {
+                updateY2(plotC, data);
+            });
     }
 }
 
 /*
-    {
-        data: [
-            { source: "SourceA", data: [ { x: int, y: int } ] },
-        ]
-    }
-*/
-updatePlots();
+ * Update the plot data for the three line charts, but don't redraw. That's the
+ * responsibility of the shiftPlots routine
+ */
+
 setInterval(function() {
     var paused = isPaused();
-    console.log(paused);
     if (!paused) {
-        updatePlots()
+        var max = Date.now() - 1000;
+        var min = max - (1000 * 60); // in millis
+        updateHistogram(min, max);
     }
 }, 1000);
 
+var lastKvEnabled = false;
+var lastSchedEnabled = false;
+
+setInterval(function() {
+    var paused = isPaused();
+    if (!paused) {
+        var max = Date.now() - 1000;
+        var min = max - (1000 * 60); // in millis
+        if (kvEnabled()) {
+            if (!lastKvEnabled) {
+                lastKvEnabled = true;
+            } else {
+                updateOpsPerSec(min, max);
+            }
+        }
+    }
+}, 1000);
+
+setInterval(function() {
+    var paused = isPaused();
+    if (!paused) {
+        var max = Date.now() - 1000;
+        var min = max - (1000 * 60); // in millis
+        if (schedEnabled()) {
+            if (!lastSchedEnabled) {
+                lastSchedEnabled = true;
+            } else {
+                updateSchedEventsPerSec(min, max);
+            }
+        }
+    }
+}, 1000);
+
+/*
+ * Shift and redraw the plots every second
+ */
+
+function shiftPlots() {
+    var max_ts = Date.now() - 1000;
+    var min_ts = max_ts - (1000 * 60); // in millis
+    console.log("Shifting plots", min_ts, max_ts);
+    plotA.options.axisX[0].maximum = max_ts;
+    plotA.options.axisX[0].minimum = min_ts;
+
+    plotB.options.axisX[0].maximum = max_ts;
+    plotB.options.axisX[0].minimum = min_ts;
+
+    plotC.options.axisX[0].maximum = max_ts;
+    plotC.options.axisX[0].minimum = min_ts;
+
+    plotA.render();
+    plotB.render();
+    plotC.render();
+}
+
+setInterval(function() {
+    var paused = isPaused();
+    if (!paused) {
+        shiftPlots();
+    }
+}, 1000);
+
+/*
+ * Update the Samples per second plot periodcally
+ */
 updateSamplesPerSec();
 function updateSamplesPerSec() {
     fetch("http://localhost:3000/samplesPerSecond")
@@ -417,50 +691,66 @@ setInterval(function() {
     }
 }, 1000);
 
-document.getElementById("updatePlots").onclick = function() {
+//document.getElementById("updatePlots").onclick = function() {
+//
+//    var source = "";
+//    var field = "";
+//    var group = [];
+//    var agg = "";
+//
+//    var e = document.getElementById("qps");
+//    if (e.checked) {
+//        source = "kv";
+//        field = "kvdur";
+//        agg = "count";
+//    }
+//
+//    var e = document.getElementById("lat");
+//    if (e.checked) {
+//        source = "kv";
+//        field = "kvdur";
+//        agg = "max";
+//    }
+//
+//    var e = document.getElementById("sched");
+//    if (e.checked) {
+//        source = "sched";
+//        field = "schedprevpid";
+//        agg = "count";
+//    }
+//
+//    var e = document.getElementsByName("setYGroup");
+//    for (i = 0; i < e.length; i++) {
+//        if (e[i].checked) {
+//            group.push(e[i].value);
+//        }
+//    }
+//
+//    dataRequests = [];
+//    if (source != "") {
+//        dataRequests.push({
+//            source: source,
+//            field: field,
+//            group: group,
+//            agg: agg,
+//        });
+//    }
+//}
+//
 
-    var source = "";
-    var field = "";
-    var group = [];
-    var agg = "";
-
-    var e = document.getElementById("qps");
-    if (e.checked) {
-        source = "kv";
-        field = "kvdur";
-        agg = "count";
-    }
-
-    var e = document.getElementById("lat");
-    if (e.checked) {
-        source = "kv";
-        field = "kvdur";
-        agg = "max";
-    }
-
-    var e = document.getElementsByName("setYGroup");
-    for (i = 0; i < e.length; i++) {
-        if (e[i].checked) {
-            group.push(e[i].value);
-        }
-    }
-
-    dataRequsts = [];
-    dataRequests.push({
-        source: source,
-        field: field,
-        group: group,
-        agg: agg,
-    });
+function kvEnabled() {
+    var e = document.getElementById("sourceKV");
+    return e.checked;
 }
 
-document.getElementById("enableSource").onclick = function() {
-
-    var e = document.getElementById("sourceKV");
-    var collectKv = e.checked;
-
+function schedEnabled() {
     var e = document.getElementById("sourceSched");
-    var collectSched = e.checked;
+    return e.checked;
+}
+
+function updateSources() {
+    var collectKv = kvEnabled();
+    var collectSched = schedEnabled();
 
     var request = JSON.stringify({
         collectKv: collectKv,
@@ -477,6 +767,18 @@ document.getElementById("enableSource").onclick = function() {
     fetch(request)
         .then(res => res.json());
 }
+
+setInterval(function() {
+    var paused = isPaused();
+    if (!paused) {
+        updateSources();
+    }
+}, 1000);
+
+
+//document.getElementById("enableSource").onclick = function() {
+//
+//}
 
 </script>
 
