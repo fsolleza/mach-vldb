@@ -1,4 +1,3 @@
-pub mod ipc;
-pub mod data;
 pub mod configuration;
-
+pub mod data;
+pub mod ipc;

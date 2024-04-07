@@ -2,11 +2,10 @@ use serde::*;
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum AppRequest {
-    Enable
+	Enable,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum AppResponse {
-    Ok
+	Ok,
 }
-
