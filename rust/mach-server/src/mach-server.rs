@@ -2,7 +2,7 @@ mod core;
 
 use core::*;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst},
     thread,
     time::Duration,
 };
@@ -35,8 +35,12 @@ fn handle_writes(mach: &mut Mach, batch: Vec<Record>) {
     for item in batch.iter() {
         match item.data {
             Data::Hist(_) => { source = 0; partition = 0; },
-            Data::KV(_) => { source = 1; partition = 1; },
-            Data::Sched(_) => { source = 2; partition = 2; },
+            Data::KV(_) => {
+                source = 1; partition = 1;
+            },
+            Data::Sched(_) => {
+                source = 2; partition = 2;
+            },
         }
         bincode::serialize_into(&mut sl, &item).unwrap();
         mach.push(

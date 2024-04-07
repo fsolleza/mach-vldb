@@ -62,14 +62,7 @@ fn handle_writes(data: Vec<Record>) {
     INFLUX_COUNT.fetch_add(data.len(), SeqCst);
 }
 
-fn handle_queries(r: InfluxRequest) -> InfluxResponse {
-    if r == InfluxRequest::Count {
-        let influx_count = INFLUX_COUNT_PER_SEC.load(SeqCst);
-        return InfluxResponse::Count(influx_count as u64);
-    }
-
-    let query = r.query_request().unwrap();
-
+fn handle_query_string(query: String) -> InfluxResponse {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -98,6 +91,16 @@ fn handle_queries(r: InfluxRequest) -> InfluxResponse {
         Err(_) => InfluxResponse::Err("Can't get anything from Influx".into()),
     };
     formatted_result
+}
+
+fn handle_queries(r: InfluxRequest) -> InfluxResponse {
+    match r {
+        InfluxRequest::Count => {
+            let influx_count = INFLUX_COUNT_PER_SEC.load(SeqCst);
+            return InfluxResponse::Count(influx_count as u64);
+        },
+        InfluxRequest::Query(query) => handle_query_string(query),
+    }
 }
 
 fn parse_comm(comm: &[u8]) -> &str {

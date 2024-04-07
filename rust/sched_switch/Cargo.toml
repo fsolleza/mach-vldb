@@ -12,8 +12,17 @@ clap = { version = "4.3", default-features = false, features = ["std", "derive"]
 crossbeam = "0.8"
 lazy_static = "1"
 core_affinity = "0.8.1"
+serde = { version = "1", features = ["derive"] }
 
 common = { path = "../common" }
 
 [build-dependencies]
 libbpf-cargo = "0.21.1"
+
+[lib]
+name = "sched_switch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sched_switch"
+path = "src/main.rs"

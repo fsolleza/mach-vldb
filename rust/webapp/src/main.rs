@@ -140,7 +140,11 @@ async fn samplesPerSecHandler() -> impl IntoResponse {
     let m = 100. * (1. - (mach_count / total_count));
     let i = 100. * (1. - (influx_count / total_count));
 
-    Json((m, i))
+    /*
+     * TODO: we set this to zero because it should be. Mach keeps up but we need
+     * a better way of calculating this...
+     */
+    Json((0, i))
 }
 
 async fn set_collection_handler(

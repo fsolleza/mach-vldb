@@ -55,7 +55,10 @@ static KVLOGS_ENABLED: AtomicBool = AtomicBool::new(false);
 static SCHEDULER_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn enable_kvlogs() {
-    KVLOGS_ENABLED.store(true, SeqCst);
+    println!("ENABLING KV LOGS IN COLLECTOR");
+    let mut connection = common::ipc::ipc_client_connect("0.0.0.0:3011").unwrap();
+    let request = workload::AppRequest::Enable;
+    let _response: workload::AppResponse = common::ipc::ipc_send(&request, &mut connection).unwrap();
 }
 
 pub fn disable_kvlogs() {
@@ -63,7 +66,9 @@ pub fn disable_kvlogs() {
 }
 
 pub fn enable_scheduler() {
-    SCHEDULER_ENABLED.store(true, SeqCst);
+    let mut connection = common::ipc::ipc_client_connect("0.0.0.0:3050").unwrap();
+    let request = sched_switch::SchedRequest::Enable;
+    let _response: sched_switch::SchedResponse = common::ipc::ipc_send(&request, &mut connection).unwrap();
 }
 
 pub fn disable_scheduler() {
@@ -361,31 +366,45 @@ COLLECTORS
 ***************************/
 
 static TOTAL_COUNT: AtomicU64 = AtomicU64::new(0);
-static COUNT_PER_SEC: AtomicU64 = AtomicU64::new(0);
+//static INFLUX_COUNT: AtomicU64 = AtomicU64::new(0);
+//static MACH_COUNT: AtomicU64 = AtomicU64::new(0);
 
-fn count_per_sec() {
-    let mut last_count = 0;
+static TOTAL_COUNT_PER_SEC: AtomicU64 = AtomicU64::new(0);
+//static INFLUX_COUNT_PER_SEC: AtomicU64 = AtomicU64::new(0);
+//static MACH_COUNT_PER_SEC: AtomicU64 = AtomicU64::new(0);
+
+fn count_per_sec(last_count: &mut u64, cnt: &AtomicU64, ps: &AtomicU64) {
+    let count = cnt.load(SeqCst);
+    let diff = count - *last_count;
+    ps.swap(diff, SeqCst);
+    *last_count = count;
+}
+
+fn run_count_per_sec() {
+    let mut last_total_count = 0;
+    let mut last_influx_count = 0;
+    let mut last_mach_count = 0;
     loop {
-        let count = TOTAL_COUNT.load(SeqCst);
-        let diff = count - last_count;
-        COUNT_PER_SEC.swap(diff, SeqCst);
-        last_count = count;
+        count_per_sec(&mut last_total_count, &TOTAL_COUNT, &TOTAL_COUNT_PER_SEC);
+        //count_per_sec(&mut last_influx_count, &INFLUX_COUNT, &INFLUX_COUNT_PER_SEC);
+        //count_per_sec(&mut last_mach_count, &MACH_COUNT, &MACH_COUNT_PER_SEC);
         thread::sleep(Duration::from_secs(1));
     }
 }
 
 pub fn init_count_receiver() {
-    thread::spawn(count_per_sec);
+    thread::spawn(run_count_per_sec);
     thread::spawn(move || {
         let server_rx: IpcReceiver<u64> = ipc_receiver("localhost:3001");
         while let Ok(count) = server_rx.recv() {
+            println!("COUNT: {}", count);
             TOTAL_COUNT.fetch_add(count, SeqCst);
         }
     });
 }
 
 pub fn get_total_count() -> u64 {
-    COUNT_PER_SEC.load(SeqCst)
+    TOTAL_COUNT_PER_SEC.load(SeqCst)
 }
 
 pub fn get_influx_count() -> u64 {

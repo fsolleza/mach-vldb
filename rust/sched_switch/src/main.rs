@@ -1,4 +1,7 @@
-use core::time::Duration;
+mod core;
+
+use core::*;
+use std::time::Duration;
 
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::Skel;
@@ -8,7 +11,7 @@ use libbpf_rs::RingBuffer;
 use libbpf_rs::PerfBufferBuilder;
 use libbpf_rs::PerfBuffer;
 use std::process;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering::SeqCst}};
+use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst}};
 use std::mem;
 use std::slice;
 use std::thread;
@@ -48,6 +51,7 @@ fn bump_memlock_rlimit() -> Result<(), ()> {
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 static EVENTS: AtomicUsize = AtomicUsize::new(0);
+static ENABLE: AtomicBool = AtomicBool::new(false);
 
 fn init_counter() {
     let count_ipc = ipc_sender("0.0.0.0:3001", Some(32));
@@ -77,14 +81,16 @@ fn egress(rx: Receiver<Record>, mach_ipc: Sender<Vec<Record>>, infl_ipc: Sender<
     while let Ok(item) = rx.recv() {
         batch.push(item);
         if batch.len() == 1024 {
-            if mach_ipc.try_send(batch.clone()).is_err() {
-                DROPPED.fetch_add(1024, SeqCst);
-                continue;
+            if ENABLE.load(SeqCst) {
+                if mach_ipc.try_send(batch.clone()).is_err() {
+                    DROPPED.fetch_add(1024, SeqCst);
+                    continue;
+                }
+                if infl_ipc.try_send(batch).is_err() {
+                    DROPPED.fetch_add(1024, SeqCst);
+                }
+                COUNT.fetch_add(1024, SeqCst);
             }
-            if infl_ipc.try_send(batch).is_err() {
-                DROPPED.fetch_add(1024, SeqCst);
-            }
-            COUNT.fetch_add(1024, SeqCst);
             batch = Vec::new();
         }
     }
@@ -103,7 +109,6 @@ fn parse_comm(comm: [i8; 16]) -> [u8; 16] {
         let sl = x[0].as_bytes();
         replace[..sl.len()].copy_from_slice(sl);
     };
-    println!("{:?}", replace);
     replace
 }
 
@@ -188,6 +193,20 @@ fn attach(_target_pid: u32) -> Result<(), libbpf_rs::Error> {
 fn main() {
     //let args = Args::parse();
     bump_memlock_rlimit().unwrap();
+
+    thread::spawn(move || {
+        let handle_queries = |r: SchedRequest| -> SchedResponse {
+            match r {
+                SchedRequest::Enable => {
+                    ENABLE.store(true, SeqCst);
+                    SchedResponse::Ok
+                }
+            }
+        };
+        common::ipc::ipc_serve("0.0.0.0:3050", handle_queries);
+    });
+
+
     std::thread::spawn(init_counter);
     let _ = RECORD_SENDER.clone();
     //std::thread::spawn(move || attach(args.pid)).join().unwrap();

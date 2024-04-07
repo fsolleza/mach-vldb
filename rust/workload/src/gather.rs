@@ -1,16 +1,20 @@
+mod core;
+
+use core::*;
 use influx_server::*;
 use common::{
     ipc::*,
     data::*,
 };
 use std::{
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst},
     time::{Duration, Instant},
     thread
 };
 
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
+static ENABLE: AtomicBool = AtomicBool::new(false);
 
 fn init_print_counter() {
     let count_tx: IpcSender<u64> = ipc_sender("0.0.0.0:3001", Some(32));
@@ -32,6 +36,19 @@ fn main() {
     let mach_tx: IpcSender<Vec<Record>> = ipc_sender("0.0.0.0:3020", Some(1024));
     let rx: IpcReceiver<Vec<Record>> = ipc_receiver("0.0.0.0:3010");
 
+    thread::spawn(move || {
+        let handle_queries = |r: AppRequest| -> AppResponse {
+            match r {
+                AppRequest::Enable => {
+                    ENABLE.store(true, SeqCst);
+                    println!("ENABLED GATHERER");
+                    AppResponse::Ok
+                }
+            }
+        };
+        common::ipc::ipc_serve("0.0.0.0:3011", handle_queries);
+    });
+
     let mut hist: Histogram = Histogram::default();
     let mut hist_timestamp = {
         let ts = micros_since_epoch();
@@ -46,6 +63,12 @@ fn main() {
             hist.max = hist.max.max(dur);
         }
         hist.cnt += batch.len() as u64;
+
+        // After the histogram, if this isnt enabled, clear the batch so that we
+        // send and count only the histograms
+        if !ENABLE.load(SeqCst) {
+            batch.clear();
+        }
 
         // If histogram interval is done, push into the batch and regenerate the
         // histogram

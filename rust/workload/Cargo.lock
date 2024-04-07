@@ -4904,6 +4904,7 @@ dependencies = [
  "lazy_static",
  "rand",
  "rocksdb",
+ "serde",
  "thread-priority",
 ]
 
