@@ -90,6 +90,25 @@ webapp: tmp_dir influx mach
 	@cd webapp; cargo build --release > ../tmp/build-webapp 2>&1
 	@taskset --cpu-list $(WEBAPP_CPU) ./webapp/target/release/webapp > tmp/log-webapp 2>&1 &
 
+.PHONY: mach-client
+mach-test-client: tmp_dir
+	@cd mach-client; cargo build --release > ../tmp/build-mach-client 2>&1
+	@echo "+ mach client built, launching now"
+	@ ./mach-client/target/release/mach-client > tmp/log-mach-client 2>&1 &
+	@echo "+ mach client running"
+	@echo "+ use \"tail -f tmp/log-mach-client\" to see prints and logs"
+
+.PHONY: mach-test-workload
+mach-test-workload: tmp_dir mach gather
+	@cd workload; cargo build --release --bin kv-workload > ../tmp/build-kv-workload 2>&1;
+	@./workload/target/release/kv-workload --cpu 1 > tmp/log-kv-workload-1 2>&1 &
+	@./workload/target/release/kv-workload --cpu 2 > tmp/log-kv-workload-2 2>&1 &
+	@echo "+ launched kv workload"
+
+.PHONY: mach-test
+mach-test: mach-test-workload mach-test-client
+	@echo "+ run \"make mach-test-stop\" to stop everything"
+
 .PHONY: tmp_dir
 tmp_dir:
 	@mkdir -p tmp
@@ -99,6 +118,18 @@ clean:
 	@echo "+ cleaning"
 	@rm -rf tmp;
 	@rm -rf $(INFLUX_DATADIR);
+
+.PHONY: mach-test-stop
+mach-test-stop:
+	@echo "+ attempting to kill kv-workloads"
+	@-pkill kv-workload >/dev/null 2>&1 || true
+	@echo "+ attempting to kill gather"
+	@-pkill gather > /dev/null 2>&1 || true
+	@echo "+ attempting to kill mach"
+	@-pkill mach-server > /dev/null 2>&1 || true
+	@echo "+ attempting to kill mach-client"
+	@-pkill -9 mach-client > /dev/null 2>&1 || true
+	@ps -a
 
 .PHONY: stop
 stop: make_sudo
@@ -117,4 +148,6 @@ stop: make_sudo
 	@-sudo pkill mach-server > /dev/null 2>&1 || true
 	@echo "+ attempting to kill webapp"
 	@-sudo pkill -9 webapp > /dev/null 2>&1 || true
+	@echo "+ attempting to kill mach-client"
+	@-sudo pkill -9 mach-client > /dev/null 2>&1 || true
 	@ps -a
