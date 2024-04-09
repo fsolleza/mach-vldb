@@ -5,6 +5,7 @@ use serde::*;
 pub enum MachRequest {
 	Hist(u64, u64),
 	ByCpu(u64, u64),
+	ByOp(u64, u64),
 	ByComm(u64, u64),
 	Count,
 }
@@ -13,6 +14,7 @@ pub enum MachRequest {
 pub enum MachResponse {
 	Hist(Vec<(u64, u64)>),
 	ByCpu(Vec<((u64, u64), u64)>),
+	ByOp(Vec<((u64, u64), u64)>),
 	ByComm(Vec<((u64, [u8; 16]), u64)>),
 	Count(u64),
 }

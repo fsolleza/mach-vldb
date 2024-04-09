@@ -75,6 +75,14 @@ fn get_histogram(
 	result
 }
 
+fn get_mach_op(
+	reader: MachReader,
+	min_ts: u64,
+	_: u64,
+) -> Vec<((u64, u64), u64)> {
+	unimplemented!()
+}
+
 fn get_mach_cpu(
 	reader: MachReader,
 	min_ts: u64,
@@ -135,6 +143,10 @@ fn read_mach(reader: MachReader, request: MachRequest) -> MachResponse {
 	match request {
 		MachRequest::ByCpu(min, max) => {
 			let r = get_mach_cpu(reader, min, max);
+			MachResponse::ByCpu(r)
+		}
+		MachRequest::ByOp(min, max) => {
+			let r = get_mach_op(reader, min, max);
 			MachResponse::ByCpu(r)
 		}
 		MachRequest::ByComm(min, max) => {
