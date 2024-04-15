@@ -9,6 +9,7 @@ edition = "2021"
 bincode = "1"
 serde = { version="1", features=["derive"] }
 fxhash = "0.2.1"
+clap = "4.5"
 
 common = { path = "../common" }
 mach-lib = { path = "../mach-lib" }

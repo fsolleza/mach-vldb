@@ -281,18 +281,25 @@ use clap::Parser;
 struct Args {
 	#[arg(short, long)]
 	cpu: u64,
+
+	#[arg(short, long)]
+	data_dir: String,
 }
 
 fn main() {
 	let args = Args::parse();
 	let cpu = args.cpu;
 	let read_ratio = 0.9;
+	let db_path = {
+		let mut p = PathBuf::from(&args.data_dir);
+		p.join(format!("2024-vldb-{}", cpu))
+	};
 
 	let (tx, rx) = bounded(1024);
 	thread::spawn(move || some_sink(rx));
 
 	let mut handles = Vec::new();
-	let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
+	//let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
 	let _ = std::fs::remove_dir_all(&db_path);
 	let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
 	handles.push(thread::spawn(move || {

@@ -9,6 +9,7 @@ use std::{
 	thread,
 	time::Duration,
 };
+use clap::Parser;
 
 static MACH_COUNT_PER_SEC: AtomicUsize = AtomicUsize::new(0);
 static MACH_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -163,9 +164,18 @@ fn read_mach(reader: MachReader, request: MachRequest) -> MachResponse {
 	}
 }
 
+#[derive(Parser, Debug, Clone)]
+#[command(version, about, long_about = None)]
+struct Args {
+	/// Receive signals from driver here
+	#[arg(short, long)]
+	mach_path: String,
+}
+
 fn main() {
+	let args = Args::parse();
 	let mut mach =
-		Mach::new("/nvme/data/tmp/vldb".into(), true, Duration::from_secs(1));
+		Mach::new(args.mach_path.into(), true, Duration::from_secs(1));
 	let mach_reader = mach.reader();
 
 	let mut handles = Vec::new();

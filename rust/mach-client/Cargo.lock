@@ -2409,6 +2409,7 @@ name = "mach-server"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "clap",
  "common",
  "fxhash",
  "mach-lib",

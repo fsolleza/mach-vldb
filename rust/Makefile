@@ -2,10 +2,14 @@ ifndef VERBOSE
 .SILENT:
 endif
 
-INFLUX_DATADIR := /nvme/data/tmp/influx
+INFLUX_DATA_DIR := /nvme/data/tmp/influx
 INFLUX_HTTPHOST := http://127.0.0.1:8080
 INFLUX_CTLHOST := http://127.0.0.1:8081
 INFLUX_BIN := ./influxdb/target/release/influxdb_iox
+
+MACH_DATA_DIR := /nvme/data/tmp/vldb
+
+ROCKSDB_PATH := /nvme/data/tmp
 
 GATHER_CPU := 15-20
 SCHED_CPU := 21-25
@@ -23,11 +27,11 @@ start: webapp workload
 .PHONY: kv-workload
 kv-workload: tmp_dir
 	cd workload; cargo build --release --bin kv-workload > ../tmp/build-kv-workload 2>&1;
-	./workload/target/release/kv-workload --cpu 1 > tmp/log-kv-workload-1 2>&1 &
-	./workload/target/release/kv-workload --cpu 3 > tmp/log-kv-workload-3 2>&1 &
-	./workload/target/release/kv-workload --cpu 5 > tmp/log-kv-workload-5 2>&1 &
-	./workload/target/release/kv-workload --cpu 7 > tmp/log-kv-workload-7 2>&1 &
-	./workload/target/release/kv-workload --cpu 9 > tmp/log-kv-workload-9 2>&1 &
+	./workload/target/release/kv-workload --cpu 1 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-1 2>&1 &
+	./workload/target/release/kv-workload --cpu 3 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-3 2>&1 &
+	./workload/target/release/kv-workload --cpu 5 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-5 2>&1 &
+	./workload/target/release/kv-workload --cpu 7 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-7 2>&1 &
+	./workload/target/release/kv-workload --cpu 9 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-9 2>&1 &
 	echo "+ launched kv workload"
 
 .PHONY: matmul-workload
@@ -61,8 +65,8 @@ workload: tmp_dir make_sudo gather kv-workload matmul-workload
 
 .PHONY: influx
 influx: tmp_dir
-	echo "+ removing old influx dir at $(INFLUX_DATADIR)"
-	rm -rf $(INFLUX_DATADIR);
+	echo "+ removing old influx dir at $(INFLUX_DATA_DIR)"
+	rm -rf $(INFLUX_DATA_DIR);
 	echo "+ building influxdb"
 	cd influxdb; \
 	cargo build --release --bin influxdb_iox > ../tmp/build-influx 2> ../tmp/build-influx
@@ -70,7 +74,7 @@ influx: tmp_dir
 		-vv \
 		--querier-max-concurrent-queries 256 \
 		--object-store file \
-		--data-dir $(INFLUX_DATADIR) \
+		--data-dir $(INFLUX_DATA_DIR) \
 		--http-host $(INFLUX_HTTPHOST) > tmp/log-influx 2> tmp/log-influx &
 	echo "+ creating influx resources"
 	sleep 3s;
@@ -86,7 +90,9 @@ influx: tmp_dir
 mach: tmp_dir
 	cd mach-server; cargo build --release --bin mach-server \
 		> ../tmp/build-mach-server 2>&1
-	taskset --cpu-list $(MACH_CPU) ./mach-server/target/release/mach-server \
+	taskset --cpu-list $(MACH_CPU) \
+		./mach-server/target/release/mach-server \
+		--mach-path $(MACH_DATA_DIR) \
 		> tmp/log-mach-server 2>&1 &
 	echo "+ mach-server running"
 
@@ -107,8 +113,8 @@ mach-test-client: tmp_dir
 .PHONY: mach-test-workload
 mach-test-workload: tmp_dir mach gather
 	cd workload; cargo build --release --bin kv-workload > ../tmp/build-kv-workload 2>&1;
-	./workload/target/release/kv-workload --cpu 1 > tmp/log-kv-workload-1 2>&1 &
-	./workload/target/release/kv-workload --cpu 2 > tmp/log-kv-workload-2 2>&1 &
+	./workload/target/release/kv-workload --cpu 1 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-1 2>&1 &
+	./workload/target/release/kv-workload --cpu 2 --data-dir $(ROCKSDB_PATH) > tmp/log-kv-workload-2 2>&1 &
 	echo "+ launched kv workload"
 
 .PHONY: mach-test
