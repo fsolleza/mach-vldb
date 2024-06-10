@@ -1,4 +1,4 @@
-use common::{data::*, ipc::ipc_sender};
+//use common::{data::*, ipc::ipc_sender};
 use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
 use lazy_static::*;
 use rand::prelude::*;
@@ -11,12 +11,15 @@ use std::{
 		Arc,
 	},
 	thread,
-	time::{Duration, Instant},
+	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+	net::TcpStream,
+	io::Write,
 };
 use thread_priority::*;
+use monitoring_application::*;
+use clap::*;
 
 type DB = Arc<DBWithThreadMode<SingleThreaded>>;
-//type DB = Arc<DashMap<u64, Mutex<Vec<u8>>>>;
 
 const THREADS: usize = 1;
 
@@ -31,6 +34,13 @@ static WRITE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 
 //static OPS_MIN_RATE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn micros_since_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64
+}
 
 fn counter2() {
 	let read_ops = READ_COUNT.swap(0, SeqCst);
@@ -161,28 +171,39 @@ fn do_write(db: &DB, key: u64, slice: &[u8]) {
 	WRITE_BYTES.fetch_max(dur, SeqCst);
 }
 
+fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
+	let mut streams: Vec<TcpStream> = addrs
+		.into_iter()
+		.map(|x| TcpStream::connect(x).unwrap())
+		.collect();
+	while let Ok(records) = rx.recv() {
+		let data = serialize(&records);
+		let sz = data.len();
+		for stream in streams.iter_mut() {
+			stream.write_all(&sz.to_be_bytes()).unwrap();
+			stream.write_all(&data).unwrap();
+		}
+	}
+}
+
 fn do_work(
 	db: DB,
 	read_ratio: f64,
 	min_key: u64,
 	max_key: u64,
 	cpu: u64,
-	out: Sender<Vec<u8>>,
+	monitoring_tx: Sender<Vec<Record>>,
+	freeing_tx: Sender<Vec<u8>>,
 ) {
 	lazy_static! {
 		static ref DATA: Vec<u8> = random_data(1024 * 4);
 	}
-
-	let log_out = ipc_sender("0.0.0.0:3010", Some(16));
 
 	let data: &'static [u8] = DATA.as_slice();
 	assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 
 	let mut rng = thread_rng();
 
-	let mut hist: Histogram = Histogram::default();
-	let mut hist_timestamp = micros_since_epoch();
-	let mut hist_start = Instant::now();
 	let bounds = random_idx_bounds(data.len(), &mut rng);
 	let mut tid = std::process::id() as u64;
 
@@ -210,23 +231,22 @@ fn do_work(
 		let now = Instant::now();
 		if read {
 			if let Some(vec) = do_read(&db, key) {
-				out.send(vec).unwrap();
+				freeing_tx.send(vec).unwrap();
 
-				let dur_nanos = now.elapsed().as_nanos() as u64;
+				let dur_micros = now.elapsed().as_micros() as u64;
 				let timestamp = micros_since_epoch();
 
 				records.push(Record {
-					timestamp,
-					data: Data::KV(KVLog {
-						op: KVOp::Read,
-						dur_nanos,
-						cpu,
-						tid,
-					}),
+					record_type: RecordType::KVOp,
+					timestamp_micros: timestamp,
+					kv_op: Some(KVOp::Read),
+					kv_cpu: Some(current_cpu),
+					kv_duration_micros: Some(dur_micros),
 				});
+
 				let l = records.len();
 				if l > 1024 {
-					if log_out.try_send(records).is_err() {
+					if monitoring_tx.try_send(records).is_err() {
 						DROPPED.fetch_add(l, SeqCst);
 					}
 					records = Vec::new();
@@ -238,25 +258,19 @@ fn do_work(
 		let slice = &data[bounds.0..bounds.1];
 		do_write(&db, key, slice);
 		flush_counter += 1;
-		//if flush_counter == 4096 {
-		//    db.flush();
-		//    flush_counter = 0;
-		//}
-		let dur_nanos = now.elapsed().as_nanos() as u64;
+		let dur_micros = now.elapsed().as_micros() as u64;
 		let timestamp = micros_since_epoch();
 
 		records.push(Record {
-			timestamp,
-			data: Data::KV(KVLog {
-				op: KVOp::Write,
-				dur_nanos,
-				cpu,
-				tid,
-			}),
+			record_type: RecordType::KVOp,
+			timestamp_micros: timestamp,
+			kv_op: Some(KVOp::Write),
+			kv_cpu: Some(current_cpu),
+			kv_duration_micros: Some(dur_micros),
 		});
 		let l = records.len();
 		if l > 1024 {
-			if log_out.try_send(records).is_err() {
+			if monitoring_tx.try_send(records).is_err() {
 				DROPPED.fetch_add(l, SeqCst);
 			}
 			records = Vec::new();
@@ -276,7 +290,6 @@ fn some_sink(rx: Receiver<Vec<u8>>) {
 	}
 }
 
-use clap::Parser;
 #[derive(Parser, Debug)]
 struct Args {
 	#[arg(short, long)]
@@ -284,6 +297,9 @@ struct Args {
 
 	#[arg(short, long)]
 	data_dir: String,
+
+	#[arg(short, long)]
+	data_addrs: Vec<String>,
 }
 
 fn main() {
@@ -295,8 +311,12 @@ fn main() {
 		p.join(format!("2024-vldb-{}", cpu))
 	};
 
-	let (tx, rx) = bounded(1024);
-	thread::spawn(move || some_sink(rx));
+	let (freeing_tx, freeing_rx) = bounded(1024);
+	thread::spawn(move || some_sink(freeing_rx));
+
+	let (monitoring_tx, monitoring_rx) = bounded(1024);
+	let addrs = args.data_addrs.clone();
+	thread::spawn(move || sender(monitoring_rx, addrs));
 
 	let mut handles = Vec::new();
 	//let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
@@ -305,7 +325,7 @@ fn main() {
 	handles.push(thread::spawn(move || {
 		let key_low = 0;
 		let key_high = 4096;
-		do_work(db, read_ratio, key_low, key_high, cpu, tx);
+		do_work(db, read_ratio, key_low, key_high, cpu, monitoring_tx, freeing_tx);
 	}));
 
 	init_counter();

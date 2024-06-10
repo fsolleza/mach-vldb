@@ -1,0 +1,147 @@
+mod storage;
+mod api;
+
+use api::*;
+use storage::*;
+use std::{
+	net::{TcpListener, TcpStream},
+	thread,
+	io::{Read, Write},
+	sync::Arc,
+	time::Duration,
+};
+use clap::*;
+
+use crossbeam::channel::{bounded, Sender, Receiver};
+
+fn data_receiver(mut stream: TcpStream, chan: Sender<Vec<Record>>) {
+	let mut msg_size = [0u8; 8];
+	let mut msg_bytes: Vec<u8>= Vec::new();
+	loop {
+		if stream.read_exact(&mut msg_size[..]).is_ok() {
+			let sz = u64::from_be_bytes(msg_size);
+
+			msg_bytes.clear();
+			msg_bytes.resize(sz as usize, 0u8);
+			stream.read_exact(&mut msg_bytes[..]).unwrap();
+			println!("receving {} bytes", sz);
+			let records: Vec<Record> =
+				bincode::deserialize(&msg_bytes[..]).unwrap();
+			chan.send(records);
+		}
+	}
+}
+
+fn query_responder<R: Reader>(mut stream: TcpStream, reader: &mut R) {
+	let mut msg_size = [0u8; 8];
+	let mut msg_bytes: Vec<u8>= Vec::new();
+
+	/*
+	 * Read from the stream
+	 */
+	stream.read_exact(&mut msg_size[..]).unwrap();
+	let sz = u64::from_be_bytes(msg_size);
+	msg_bytes.clear();
+	msg_bytes.resize(sz as usize, 0u8);
+	stream.read_exact(&mut msg_bytes[..]).unwrap();
+	let requests: Vec<Request> =
+		bincode::deserialize(&msg_bytes[..]).unwrap();
+
+	/*
+	 * Handle the request
+	 */
+	let mut responses = Vec::new();
+	for r in requests {
+		match r {
+			Request::Statistics => unimplemented!(),
+			Request::Data(data_request) =>
+				responses.push(reader.handle_request(&data_request)),
+		}
+	}
+
+	/*
+	 * Write the response
+	 */
+	let response_bytes = bincode::serialize(&responses).unwrap();
+	stream.write_all(&response_bytes.len().to_be_bytes()).unwrap();
+	stream.write_all(&response_bytes).unwrap();
+}
+
+fn init_storage<S: Storage>(data_addr: &str, query_addr: &str, store: S) {
+
+	let (data_tx, data_rx) = bounded::<Vec<Record>>(1024);
+	let mut reader = store.reader();
+	println!("Setting up listener for data at {:?}", data_addr);
+	let data_listener = TcpListener::bind(data_addr).unwrap();
+	println!("Setting up listener for queries at {:?}", query_addr);
+	let query_listener = TcpListener::bind(query_addr).unwrap();
+
+	/*
+	 * Setup an ingest thread to receive data over TCP keep track of
+	 * statistics. This thread passes data over to the storage writer thread
+	 */
+	thread::spawn(move || {
+		println!("Waiting for a connection");
+		for stream in data_listener.incoming() {
+			println!("Got a connection");
+			let data_tx = data_tx.clone();
+			thread::spawn(move || {
+				data_receiver(stream.unwrap(), data_tx);
+			});
+		}
+		println!("Exiting listener");
+	});
+
+	/*
+	 * Setup the storage writer thread, receiving data over the channel and
+	 * writing into storage
+	 */
+	thread::spawn(move || {
+		while let Ok(batch) = data_rx.recv() {
+			store.push_batch(&batch);
+		}
+	});
+
+	/*
+	 * Setup a thread that handles queries one at a time.
+	 */
+	thread::spawn(move || {
+		for stream in query_listener.incoming() {
+			let mut stream = stream.unwrap();
+			query_responder(stream, &mut reader);
+		}
+	});
+}
+
+#[derive(Parser, Debug, Clone)]
+#[command(version, about, long_about = None)]
+struct Args {
+	/// Receive data using this address and port
+	#[arg(short, long)]
+	data_addr: String,
+
+	/// Receive queries using this address and port
+	#[arg(short, long)]
+	query_addr: String,
+
+	/// mem, mach, or  influx
+	#[arg(short, long)]
+	storage: String,
+}
+
+fn main() {
+	let args = Arc::new(Args::parse());
+	println!("Args: {:?}", args);
+
+	match args.storage.as_str() {
+		"mem" => {
+			let memstorage = Memstore::new();
+			init_storage(&args.data_addr, &args.query_addr, memstorage);
+		},
+		_ => panic!("unhandled storage argument"),
+	}
+
+	loop {
+		thread::sleep(Duration::from_secs(10));
+	}
+}

@@ -17,21 +17,23 @@ dashmap = "5"
 core_affinity = "0.8.1"
 rocksdb = "0.22"
 
-common = { path = "../common" }
-influx-server = { path = "../influx-server" }
+monitoring-application = { path = "../monitoring-application" }
 
-[lib]
-name = "workload"
-path = "src/lib.rs"
+# common = { path = "../common" }
+# influx-server = { path = "../influx-server" }
 
-[[bin]]
-name = "kv-workload"
-path = "src/kv-workload.rs"
+#[lib]
+#name = "workload"
+#path = "src/lib.rs"
 
-[[bin]]
-name = "gather"
-path = "src/gather.rs"
+#[[bin]]
+#name = "kv-workload"
+#path = "src/kv-workload.rs"
 
-[[bin]]
-name = "matmul-workload"
-path = "src/matmul.rs"
+#[[bin]]
+#name = "gather"
+#path = "src/gather.rs"
+
+#[[bin]]
+#name = "matmul-workload"
+#path = "src/matmul.rs"
