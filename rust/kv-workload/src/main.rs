@@ -65,56 +65,6 @@ fn set_core_affinity(cpu: usize) {
 	assert!(set_for_current(CoreId { id: cpu }));
 }
 
-//fn random_core_affinity<const T: usize>() -> usize {
-//    let mut rng = thread_rng();
-//    let cpu = rng.gen::<usize>() % T;
-//    set_core_affinity(cpu);
-//    cpu
-//}
-
-//fn init_logging() -> Sender<Record> {
-//    let (tx, rx) = unbounded();
-//    let ipc = ipc_sender("0.0.0.0:3001", None);
-//    thread::spawn(move || {
-//        set_core_affinity(30);
-//        egress(rx, ipc);
-//    });
-//    tx
-//}
-//
-//fn egress(rx: Receiver<Record>, ipc: Sender<Vec<Record>>) {
-//    let mut batch: Vec<Record> = Vec::new();
-//
-//    let mut hist: Histogram = Histogram::default();
-//    let mut base_hist_timestamp = 0;
-//
-//    loop {
-//        if let Ok(item) = rx.try_recv() {
-//            let b = item.timestamp - item.timestamp % (1_000_000);
-//            if b > base_hist_timestamp {
-//                batch.push(Record {
-//                    timestamp: base_hist_timestamp,
-//                    data: Data::Hist(hist),
-//                });
-//                hist = Histogram::default();
-//                base_hist_timestamp = b;
-//            }
-//
-//            hist.max = hist.max.max(item.data.kv_log().unwrap().dur_nanos);
-//            hist.cnt += 1;
-//
-//            batch.push(item);
-//            if batch.len() >= 1024 {
-//                let l = batch.len();
-//                if ipc.try_send(batch).is_err() {
-//                    DROPPED.fetch_add(l, SeqCst);
-//                }
-//                batch = Vec::new();
-//            }
-//        }
-//    }
-//}
-
 fn setup_db(path: PathBuf) -> DB {
 	let _ = std::fs::remove_dir_all(&path);
 	let db = DBWithThreadMode::<SingleThreaded>::open_default(path).unwrap();
@@ -172,10 +122,12 @@ fn do_write(db: &DB, key: u64, slice: &[u8]) {
 }
 
 fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
+	println!("Connecting to {:?}", addrs);
 	let mut streams: Vec<TcpStream> = addrs
 		.into_iter()
 		.map(|x| TcpStream::connect(x).unwrap())
 		.collect();
+	println!("Connected!");
 	while let Ok(records) = rx.recv() {
 		let data = serialize(&records);
 		let sz = data.len();
@@ -200,7 +152,6 @@ fn do_work(
 	}
 
 	let data: &'static [u8] = DATA.as_slice();
-	assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 
 	let mut rng = thread_rng();
 
@@ -280,13 +231,11 @@ fn do_work(
 
 fn some_sink(rx: Receiver<Vec<u8>>) {
 	let mut now = Instant::now();
-	loop {
-		if let Ok(v) = rx.try_recv() {
-			if now.elapsed().as_secs_f64() > 1. {
-				now = Instant::now();
-			}
-			drop(v);
+	while let Ok(v) = rx.recv() {
+		if now.elapsed().as_secs_f64() > 1. {
+			now = Instant::now();
 		}
+		drop(v);
 	}
 }
 
@@ -312,17 +261,24 @@ fn main() {
 	};
 
 	let (freeing_tx, freeing_rx) = bounded(1024);
-	thread::spawn(move || some_sink(freeing_rx));
+	thread::spawn(move || {
+		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
+		some_sink(freeing_rx);
+	});
 
 	let (monitoring_tx, monitoring_rx) = bounded(1024);
 	let addrs = args.data_addrs.clone();
-	thread::spawn(move || sender(monitoring_rx, addrs));
+	thread::spawn(move || {
+		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
+		sender(monitoring_rx, addrs);
+	});
 
 	let mut handles = Vec::new();
 	//let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
 	let _ = std::fs::remove_dir_all(&db_path);
 	let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
 	handles.push(thread::spawn(move || {
+		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 		let key_low = 0;
 		let key_high = 4096;
 		do_work(db, read_ratio, key_low, key_high, cpu, monitoring_tx, freeing_tx);

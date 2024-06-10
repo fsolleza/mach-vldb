@@ -16,13 +16,18 @@ endif
 ADDR_MEMSTORE_DATA  := 0.0.0.0:3501
 ADDR_MEMSTORE_QUERY := 0.0.0.0:3511
 
+ADDRS_DATA          := 0.0.0.0:3501
+
 CPUS_MEMSTORE := 50-53
-CPUS_WEBAPP := 2-4
+CPUS_WEBAPP := 10-15
 
-BIN_WEBAPP         := ./webapp/target/release/webapp
-BIN_MONITORING_APP := ./monitoring-application/target/release/monitoring-application
+BIN_WEBAPP          := ./webapp/target/release/webapp
+BIN_MONITORING_APP  := ./monitoring-application/target/release/monitoring-application
+BIN_KV_WORKLOAD     := ./kv-workload/target/release/kv-workload
+BIN_MATRIX_MULTIPLY := ./matrix-multiply/target/release/matrix-multiply
 
-PATH_BG_PIDS := tmp/bg_pids
+PATH_BG_PIDS  := tmp/bg_pids
+PATH_WORKLOAD := /nvme/data/tmp/vldb/workload
 
 ###############
 ## Functions ##
@@ -32,7 +37,7 @@ pprint := printf "+ %s\n"
 
 define bg
 	$(shell stty sane)
-	$(shell $(1) > tmp/log-$@ 2>&1 & \
+	$(shell $(1) > tmp/log-$@$(2) 2>&1 & \
 		echo $@,$$! >> $(PATH_BG_PIDS))
 	$(shell stty sane)
 	$(pprint) "Running $@"
@@ -58,7 +63,7 @@ endef
 .PHONY: webapp
 webapp: tmp-dir
 	$(pprint) "Running webapp"
-	$(call bg, taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP))
+	$(call bg, taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP),)
 
 .PHONY: monitoring-application-memstore
 monitoring-application-memstore: tmp-dir
@@ -68,7 +73,48 @@ monitoring-application-memstore: tmp-dir
 		$(BIN_MONITORING_APP) \
 		--storage mem \
 		--data-addr $(ADDR_MEMSTORE_DATA) \
-		--query-addr $(ADDR_MEMSTORE_QUERY))
+		--query-addr $(ADDR_MEMSTORE_QUERY) \
+	,)
+
+.PHONY: matrix-multiply
+matrix-multiply: tmp-dir do-sudo
+	$(pprint) "Running monitoring application with memstore"
+	$(call bg, sudo $(BIN_MATRIX_MULTIPLY),)
+
+
+.PHONY: kv-workload
+kv-workload: tmp-dir
+	$(pprint) "Running kv-workload processes"
+	$(call bg, \
+		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		--cpu 1 \
+		--data-dir $(PATH_WORKLOAD)1 \
+		--data-addrs $(ADDRS_DATA) \
+		,1)
+	$(call bg, \
+		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		--cpu 3 \
+		--data-dir $(PATH_WORKLOAD)2 \
+		--data-addrs $(ADDRS_DATA) \
+		,2)
+	$(call bg, \
+		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		--cpu 5 \
+		--data-dir $(PATH_WORKLOAD)3 \
+		--data-addrs $(ADDRS_DATA) \
+		,3)
+	$(call bg, \
+		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		--cpu 7 \
+		--data-dir $(PATH_WORKLOAD)4 \
+		--data-addrs $(ADDRS_DATA) \
+		,4)
+	$(call bg, \
+		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		--cpu 9 \
+		--data-dir $(PATH_WORKLOAD)5 \
+		--data-addrs $(ADDRS_DATA) \
+		,5)
 
 ###################
 ## BUILD TARGETS ##
@@ -81,6 +127,14 @@ build-webapp: tmp-dir
 .PHONY: build-monitoring-application
 build-monitoring-application: tmp-dir
 	$(call rust_build,monitoring-application,,)
+
+.PHONY: build-kv-workload
+build-kv-workload:
+	$(call rust_build,kv-workload,,)
+
+.PHONY: build-matrix-multiply
+build-matrix-multiply:
+	$(call rust_build,matrix-multiply,,)
 
 #############
 ## HELPERS ##
@@ -121,3 +175,9 @@ stop:
 .PHONY: ps
 ps:
 	ps -U $$(whoami) -o pid,comm,cmd --sort comm
+
+.PHONY: do-sudo
+do-sudo:
+	stty sane
+	sudo $(pprint) "confirmed sudo"
+	stty sane
