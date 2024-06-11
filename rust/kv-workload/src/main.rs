@@ -129,6 +129,10 @@ fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
 		.collect();
 	println!("Connected!");
 	while let Ok(records) = rx.recv() {
+		let records = RecordBatch {
+			record_type: RecordType::KVOp,
+			records,
+		};
 		let data = serialize(&records);
 		let sz = data.len();
 		for stream in streams.iter_mut() {
@@ -187,12 +191,14 @@ fn do_work(
 				let dur_micros = now.elapsed().as_micros() as u64;
 				let timestamp = micros_since_epoch();
 
-				records.push(Record {
-					record_type: RecordType::KVOp,
-					timestamp_micros: timestamp,
-					kv_op: Some(KVOp::Read),
-					kv_cpu: Some(current_cpu),
-					kv_duration_micros: Some(dur_micros),
+				records.push({
+					let mut r = Record::default();
+					r.record_type = RecordType::KVOp;
+					r.timestamp_micros = timestamp;
+					r.kv_op = KVOp::Read;
+					r.cpu = current_cpu;
+					r.duration_micros = dur_micros;
+					r
 				});
 
 				let l = records.len();
@@ -212,13 +218,16 @@ fn do_work(
 		let dur_micros = now.elapsed().as_micros() as u64;
 		let timestamp = micros_since_epoch();
 
-		records.push(Record {
-			record_type: RecordType::KVOp,
-			timestamp_micros: timestamp,
-			kv_op: Some(KVOp::Write),
-			kv_cpu: Some(current_cpu),
-			kv_duration_micros: Some(dur_micros),
+		records.push({
+			let mut r = Record::default();
+			r.record_type = RecordType::KVOp;
+			r.timestamp_micros = timestamp;
+			r.kv_op = KVOp::Write;
+			r.cpu = current_cpu;
+			r.duration_micros = dur_micros;
+			r
 		});
+
 		let l = records.len();
 		if l > 1024 {
 			if monitoring_tx.try_send(records).is_err() {

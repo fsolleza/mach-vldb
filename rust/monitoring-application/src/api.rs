@@ -3,24 +3,28 @@ use std::collections::HashSet;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum Field {
-	kv_op,
-	kv_duration_micros,
-	kv_cpu,
+	KvOp,
+	DurationMicros,
+	Cpu,
+	TimestampMicros,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum FieldValue {
-	kv_op(KVOp),
-	kv_duration_micros(u64),
-	kv_cpu(u64),
-	none,
+	Uint(u64),
+	None,
+}
+
+impl Default for FieldValue {
+	fn default() -> Self {
+		Self::None
+	}
 }
 
 impl FieldValue {
 	pub fn as_uint(&self) -> u64 {
 		match self {
-			FieldValue::kv_duration_micros(x) => *x,
-			FieldValue::kv_cpu(x) => *x,
+			FieldValue::Uint(x) => *x,
 			_ => panic!("Error casting Field value to int"),
 		}
 	}
@@ -59,35 +63,61 @@ pub enum Response {
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum KVOp {
-	Read,
-	Write,
+	Read = 0,
+	Write = 1,
+}
+
+impl Default for KVOp {
+	fn default() -> Self {
+		Self::Read
+	}
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum RecordType {
 	KVOp,
-	Sched
+	Scheduler,
+	None,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
+impl Default for RecordType {
+	fn default() -> Self {
+		Self::None
+	}
+}
+
+/*
+ * To simplify, we shove everything into a single record type and note the
+ * schema using the RecordType enum
+ */
+#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
 pub struct Record {
 	pub record_type: RecordType,
-	pub kv_op: Option<KVOp>,
-	pub kv_cpu: Option<u64>,
-	pub kv_duration_micros: Option<u64>,
-	pub timestamp_micros: u64
+	pub timestamp_micros: u64,
+	pub duration_micros: u64,
+	pub cpu: u64,
+	pub kv_op: KVOp,
+	pub prev_pid: u64,
+	pub next_pid: u64,
+	pub comm: [u8; 16],
 }
 
 impl Record {
 	pub fn get_field_value(&self, field: Field) -> FieldValue {
 		match field {
-			Field::kv_op => FieldValue::kv_op(self.kv_op.unwrap()),
-			Field::kv_cpu => FieldValue::kv_cpu(self.kv_cpu.unwrap()),
-			Field::kv_duration_micros => FieldValue::kv_duration_micros(
-				self.kv_duration_micros.unwrap()
-			),
+			Field::KvOp => FieldValue::Uint(self.kv_op as u64),
+			Field::Cpu => FieldValue::Uint(self.cpu),
+			Field::DurationMicros => FieldValue::Uint(self.duration_micros),
+			Field::TimestampMicros => FieldValue::Uint(self.timestamp_micros),
+			_ => unimplemented!(),
 		}
 	}
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecordBatch {
+	pub record_type: RecordType,
+	pub records: Vec<Record>
 }
 
 pub fn serialize<T: Serialize>(data: &T) -> Vec<u8> {

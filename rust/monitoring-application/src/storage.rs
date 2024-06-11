@@ -84,24 +84,7 @@ impl Reader for Memstore {
 }
 
 fn empty_field_value_buffer() -> [FieldValue; 16] {
-	[
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-		FieldValue::none,
-	]
+	[ FieldValue::None; 16 ]
 }
 
 pub fn micros_since_epoch() -> u64 {

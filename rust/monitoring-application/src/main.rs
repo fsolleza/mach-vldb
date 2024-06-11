@@ -14,7 +14,7 @@ use clap::*;
 
 use crossbeam::channel::{bounded, Sender, Receiver};
 
-fn data_receiver(mut stream: TcpStream, chan: Sender<Vec<Record>>) {
+fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 	let mut msg_size = [0u8; 8];
 	let mut msg_bytes: Vec<u8>= Vec::new();
 	loop {
@@ -25,7 +25,7 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<Vec<Record>>) {
 			msg_bytes.resize(sz as usize, 0u8);
 			stream.read_exact(&mut msg_bytes[..]).unwrap();
 			println!("receving {} bytes", sz);
-			let records: Vec<Record> =
+			let records: RecordBatch =
 				bincode::deserialize(&msg_bytes[..]).unwrap();
 			chan.send(records);
 		}
@@ -69,7 +69,7 @@ fn query_responder<R: Reader>(mut stream: TcpStream, reader: &mut R) {
 
 fn init_storage<S: Storage>(data_addr: &str, query_addr: &str, store: S) {
 
-	let (data_tx, data_rx) = bounded::<Vec<Record>>(1024);
+	let (data_tx, data_rx) = bounded::<RecordBatch>(1024);
 	let mut reader = store.reader();
 	println!("Setting up listener for data at {:?}", data_addr);
 	let data_listener = TcpListener::bind(data_addr).unwrap();
@@ -98,7 +98,7 @@ fn init_storage<S: Storage>(data_addr: &str, query_addr: &str, store: S) {
 	 */
 	thread::spawn(move || {
 		while let Ok(batch) = data_rx.recv() {
-			store.push_batch(&batch);
+			store.push_batch(&batch.records);
 		}
 	});
 

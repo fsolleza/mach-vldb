@@ -1,7 +1,4 @@
-mod core;
-
-use core::*;
-use std::time::Duration;
+use monitoring_application::{Record, RecordType, serialize, RecordBatch};
 
 use lazy_static::*;
 use libbpf_rs::skel::OpenSkel;
@@ -11,18 +8,18 @@ use libbpf_rs::PerfBuffer;
 use libbpf_rs::PerfBufferBuilder;
 use libbpf_rs::RingBuffer;
 use libbpf_rs::RingBufferBuilder;
-use std::mem;
-use std::process;
-use std::slice;
-use std::sync::{
-	atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
-	Arc,
-};
-use std::thread;
-
-use common::{
-	data::{Data, Record, Sched},
-	ipc::*,
+use std::{
+	mem,
+	process,
+	slice,
+	sync::{
+		atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+		Arc,
+	},
+	net::TcpStream,
+	io::Write,
+	thread,
+	time::Duration,
 };
 use crossbeam::channel::{bounded, Receiver, Sender};
 
@@ -35,7 +32,7 @@ mod sched_switch {
 use sched_switch::*;
 
 lazy_static! {
-	static ref RECORD_SENDER: Sender<Record> = init_egress();
+	static ref RECORD_CHAN: (Sender<Record>, Receiver<Record>) = bounded(4096);
 }
 
 fn bump_memlock_rlimit() -> Result<(), ()> {
@@ -54,51 +51,42 @@ fn bump_memlock_rlimit() -> Result<(), ()> {
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 static EVENTS: AtomicUsize = AtomicUsize::new(0);
-static ENABLE: AtomicBool = AtomicBool::new(false);
 
 fn init_counter() {
-	let count_ipc = ipc_sender("0.0.0.0:3001", Some(32));
 	loop {
 		let c = COUNT.swap(0, SeqCst);
 		let d = DROPPED.swap(0, SeqCst);
 		let e = EVENTS.swap(0, SeqCst);
 		println!("Count: {} {} {}", c, d, e);
-		count_ipc.send(c).unwrap();
-		std::thread::sleep(Duration::from_secs_f64(0.25));
+		std::thread::sleep(Duration::from_secs(1));
 	}
 }
 
-fn init_egress() -> Sender<Record> {
-	let (tx, rx) = bounded(4096);
-	let mach_ipc = ipc_sender("0.0.0.0:3020", Some(32));
-	let infl_ipc = ipc_sender("0.0.0.0:3040", Some(32));
-	thread::spawn(move || {
-		egress(rx, mach_ipc, infl_ipc);
-	});
-	tx
-}
+fn sender(rx: Receiver<Record>, addrs: Vec<String>) {
+	println!("Connecting to {:?}", addrs);
+	let mut streams: Vec<TcpStream> = addrs
+		.into_iter()
+		.map(|x| TcpStream::connect(x).unwrap())
+		.collect();
+	println!("Connected!");
 
-fn egress(
-	rx: Receiver<Record>,
-	mach_ipc: Sender<Vec<Record>>,
-	infl_ipc: Sender<Vec<Record>>,
-) {
-	let mut batch: Vec<Record> = Vec::new();
-	println!("Beginning egress loop");
-	while let Ok(item) = rx.recv() {
-		batch.push(item);
-		if batch.len() == 1024 {
-			if ENABLE.load(SeqCst) {
-				if mach_ipc.try_send(batch.clone()).is_err() {
-					DROPPED.fetch_add(1024, SeqCst);
-					continue;
-				}
-				if infl_ipc.try_send(batch).is_err() {
-					DROPPED.fetch_add(1024, SeqCst);
-				}
-				COUNT.fetch_add(1024, SeqCst);
+	let mut records = Vec::new();
+	while let Ok(record) = rx.recv() {
+		records.push(record);
+		if records.len() == 1024 {
+			let r = RecordBatch {
+				record_type: RecordType::KVOp,
+				records: records,
+			};
+			let data = serialize(&r);
+			let sz = data.len();
+			for stream in streams.iter_mut() {
+				stream.write_all(&sz.to_be_bytes()).unwrap();
+				stream.write_all(&data).unwrap();
 			}
-			batch = Vec::new();
+			COUNT.fetch_add(1024, SeqCst);
+			records = r.records;
+			records.clear();
 		}
 	}
 }
@@ -125,21 +113,20 @@ struct Event {
 	prev_pid: u64,
 	next_pid: u64,
 	cpu: u64,
-	timestamp: u64,
+	timestamp_micros: u64,
 	comm: [i8; 16],
 }
 
 impl Event {
 	pub fn to_record(&self) -> Record {
-		Record {
-			timestamp: self.timestamp,
-			data: Data::Sched(Sched {
-				prev_pid: self.prev_pid,
-				next_pid: self.next_pid,
-				comm: parse_comm(self.comm),
-				cpu: self.cpu,
-			}),
-		}
+		let mut r = Record::default();
+		r.record_type = RecordType::Scheduler;
+		r.timestamp_micros = self.timestamp_micros;
+		r.prev_pid = self.prev_pid;
+		r.next_pid = self.next_pid;
+		r.comm = parse_comm(self.comm);
+		r.cpu = self.cpu;
+		r
 	}
 }
 
@@ -155,7 +142,7 @@ fn copy_from_bytes(e: &mut Event, bytes: &[u8]) {
 }
 
 fn handler(cpu: i32, bytes: &[u8]) -> i32 {
-	let sender = RECORD_SENDER.clone();
+	let sender = RECORD_CHAN.0.clone();
 	let mut event = Event::default();
 	copy_from_bytes(&mut event, bytes);
 	EVENTS.fetch_add(1, SeqCst);
@@ -189,32 +176,18 @@ fn attach(_target_pid: u32) -> Result<(), libbpf_rs::Error> {
 	}
 }
 
-//#[derive(Parser, Debug)]
-//#[command(version, about, long_about = None)]
-//struct Args {
-//    /// Target pid
-//    #[arg(short, long)]
-//    pid: u32,
-//}
+#[derive(Parser, Debug)]
+struct Args {
+	#[arg(short, long)]
+	data_addrs: Vec<String>,
+}
 
 fn main() {
-	//let args = Args::parse();
+	let args = Args::parse();
 	bump_memlock_rlimit().unwrap();
+	thread::spawn(init_counter);
 
-	thread::spawn(move || {
-		let handle_queries = |r: SchedRequest| -> SchedResponse {
-			match r {
-				SchedRequest::Enable => {
-					ENABLE.store(true, SeqCst);
-					SchedResponse::Ok
-				}
-			}
-		};
-		common::ipc::ipc_serve("0.0.0.0:3050", handle_queries);
-	});
-
-	std::thread::spawn(init_counter);
-	let _ = RECORD_SENDER.clone();
-	//std::thread::spawn(move || attach(args.pid)).join().unwrap();
-	std::thread::spawn(move || attach(0)).join().unwrap();
+	let (_tx, rx) = RECORD_CHAN.clone();
+	thread::spawn(move || sender(rx, args.data_addrs.clone()));
+	thread::spawn(move || attach(0)).join().unwrap();
 }
