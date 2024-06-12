@@ -52,6 +52,12 @@ body {
 			</p>
 			</div>
 
+			<div>
+			<p>
+            <input type="checkbox" id="pauseRequests"> Check to pause <br>
+			</p>
+			</div>
+
             </div>
 
         </div>
@@ -66,15 +72,13 @@ body {
     </div>
 </div>
 
-<p> <input id="pauseBox" type="checkbox">Pause</input></p>
-
 <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
 <script>
 
-REQUEST = {[]}
+REQUESTS = []
 
 function isPaused() {
-    var pauseField = document.getElementById('pauseBox');
+    var pauseField = document.getElementById('pauseRequests');
     return pauseField.checked;
 }
 
@@ -85,36 +89,40 @@ setInterval(
 			console.log("paused");
 		} else {
 			console.log("not paused");
-			getData();
+			updateCharts();
 		}
 	},
 	1000
 );
 
 function updateCharts() {
+
+	var max = (Date.now() - 1000) * 1000; // in micros
+	var min = max - (60 * 1000000);       // in micros
+
     var kvCount = document.getElementById('kvCount').checked;
-    var kvLat = document.getElementById('kvLat').checked;
     var kvCpu = document.getElementById('kvCpu').checked;
     var kvTid = document.getElementById('kvTid').checked;
 
-    var schedCount = document.getElementById('schedCount').checked;
-    var schedCpu = document.getElementById('schedCpu').checked;
-    var schedComm = document.getElementById('schedComm').checked;
+	var field = "None";
+	if (kvCount) {
+		field = "KvOp";
+	} else {
+		return;
+	}
 
-	REQUEST = { requests: [] }
-	REQUEST.requests.add({
-		source: "source",
-		engine: "engine",
-		min_ts_millis: 12345,
-		max_ts_millis: 67890,
-		aggregation: "aggregation",
-		grouping: ["groupA", "groupB"],
-		type_: "type",
-	});
-}
+	var req = {
+		"Data": {
+			"storage": "Mem",
+			"field": field,
+			"min_ts_micros": min,
+			"max_ts_micros": max,
+			"aggregation": "Sum",
+			"grouping": ["KvOp", "Cpu", "DurationMicros"]
+		}
+	}
 
-function getData() {
-    var request = JSON.stringify(REQUEST);
+    var request = JSON.stringify(req);
 	console.log(request);
     var request = new Request("http://localhost:3000/dataRequest", {
         method: 'POST',
@@ -129,6 +137,33 @@ function getData() {
 		    console.log("Response", data);
 		});
 }
+
+//function getData() {
+//	var max = (Date.now() - 1000) * 1000; // in micros
+//	var min = max - (60 * 1000000);       // in micros
+//
+//	for (var i = 0; i < REQUESTS.length; i++) {
+//		if (REQUESTS[i] != "Statistics") {
+//			REQUESTS[i]["Data"]["max_ts_micros"] = max;
+//			REQUESTS[i]["Data"]["min_ts_micros"] = min;
+//		}
+//	}
+//
+//    var request = JSON.stringify(REQUESTS);
+//	console.log(request);
+//    var request = new Request("http://localhost:3000/dataRequest", {
+//        method: 'POST',
+//        body: request,
+//        headers: new Headers({
+//            'Content-Type': 'application/json'
+//        })
+//    });
+//    fetch(request)
+//		.then(data => data.json())
+//		.then(data => {
+//		    console.log("Response", data);
+//		});
+//}
 
 //var plotD = new CanvasJS.Chart("plotD", {
 //    title: {

@@ -2,11 +2,19 @@ use serde::*;
 use std::collections::HashSet;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
+pub enum StorageEngine {
+	Mem
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum Field {
 	KvOp,
 	DurationMicros,
 	Cpu,
 	TimestampMicros,
+
+	#[default]
+	None
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
@@ -44,6 +52,7 @@ pub enum Request {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct DataRequest {
+	pub storage: StorageEngine,
 	pub field: Field,
 	pub min_ts_micros: u64,
 	pub max_ts_micros: u64,
@@ -51,8 +60,10 @@ pub struct DataRequest {
 	pub grouping: HashSet<Field>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum Response {
+	#[default]
+	None,
 	Statistics {
 		percent_complete: u64,
 	},

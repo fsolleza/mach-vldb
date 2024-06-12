@@ -1,0 +1,72 @@
+use serde::*;
+use std::collections::{HashMap, HashSet};
+use monitoring_application::*;
+
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
+pub struct WebRequest {
+	pub request_type: String,
+	pub source: String,
+	pub field: String,
+	pub engine: String,
+	pub min_ts_millis: u64,
+	pub max_ts_millis: u64,
+	pub aggregation: String,
+	pub grouping: Vec<String>,
+}
+
+impl WebRequest {
+	pub fn into_request(&self) -> Option<Request> {
+		if &self.request_type == "statistics" {
+			return Some(Request::Statistics);
+		}
+
+		if &self.request_type == "data_request" {
+		}
+		None
+	}
+
+	pub fn make_data_request(&self) -> Option<Request> {
+		match &self.field {
+			"KvOp" => Field::KvOp,
+			"DurationMicros" => Field::DurationMicros,
+			"Cpu" => Field::Cpu,
+			"TimestampMicros" => Field::TimestampMicros,
+
+pub enum Field {
+	KvOp,
+	DurationMicros,
+	Cpu,
+	TimestampMicros,
+}
+
+		}
+	}
+}
+
+// #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
+// pub enum Request {
+// 	Statistics,
+// 	Data(DataRequest),
+// }
+// 
+// #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
+// pub struct DataRequest {
+// 	pub field: Field,
+// 	pub min_ts_micros: u64,
+// 	pub max_ts_micros: u64,
+// 	pub aggregation: Aggregation,
+// 	pub grouping: HashSet<Field>,
+// }
+
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
+pub struct WebResponse {
+	pub responses: Vec<Vec<u64>>
+}
+
+impl WebResponse {
+	pub fn from_response(response: &Response) -> Self {
+		unimplemented!()
+	}
+}

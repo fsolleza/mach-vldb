@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-mod api;
+use monitoring_application::*;
 
 use axum::{
 	extract::{Json, State},
@@ -8,7 +8,6 @@ use axum::{
 	routing::{get, post},
 	Router,
 };
-use api::*;
 use fxhash::FxHashMap;
 use lazy_static::*;
 use rand::prelude::*;
@@ -22,9 +21,23 @@ use std::{
 	},
 	thread,
 	time::{Duration, Instant, SystemTime},
+	io::{Read, Write},
 };
 use tokio::runtime;
-use tokio::sync::mpsc;
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use clap::*;
+
+#[derive(Parser, Debug, Clone)]
+#[command(version, about, long_about = None)]
+struct Args {
+	#[arg(short, long)]
+	addr_memstore: String,
+}
+
+lazy_static! {
+	static ref ARGS: Args = Args::parse();
+}
 
 fn main() {
 	let mut handles = Vec::new();
@@ -62,10 +75,33 @@ async fn request_handler(
 
 	let Json(req) = msg;
 	println!("Got request {:?}", req);
-	let mut responses = Vec::new();
-	for v in req.requests {
-		let r = responses.push(vec![0]);
-	}
-	let r = Response { responses };
-	Json(r)
+
+	let response: Response = match req {
+		Request::Statistics => unimplemented!(),
+		Request::Data(ref x) => {
+			// Connect based on the storage engine
+			let mut stream = match x.storage {
+				StorageEngine::Mem => 
+					TcpStream::connect(&ARGS.addr_memstore).await.unwrap(),
+			};
+
+			// Send request
+			let req = bincode::serialize(&req).unwrap();
+			stream.write_all(&req.len().to_be_bytes()).await.unwrap();
+			stream.write_all(&req).await.unwrap();
+
+			// Take response
+			let mut sz = [0u8; 8];
+			stream.read_exact(&mut sz).await.unwrap();
+			let sz = u64::from_be_bytes(sz);
+			let mut v = vec![0u8; sz as usize];
+			stream.read_exact(&mut v).await.unwrap();
+			let resp: Response = bincode::deserialize_from(&v[..]).unwrap();
+			resp
+		}
+	};
+	
+	let resp = Response::default();
+
+	Json(resp)
 }

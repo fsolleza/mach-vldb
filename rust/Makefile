@@ -18,13 +18,16 @@ ADDR_MEMSTORE_QUERY := 0.0.0.0:3511
 
 ADDRS_DATA          := 0.0.0.0:3501
 
-CPUS_MEMSTORE := 50-53
-CPUS_WEBAPP := 10-15
+CPUS_MEMSTORE         := 50-53
+CPUS_WEBAPP           := 10-15
+CPUS_KV_WORKLOAD      := 1-10
+CPUS_SCHEDULER_EVENTS := 21-25
 
-BIN_WEBAPP          := ./webapp/target/release/webapp
-BIN_MONITORING_APP  := ./monitoring-application/target/release/monitoring-application
-BIN_KV_WORKLOAD     := ./kv-workload/target/release/kv-workload
-BIN_MATRIX_MULTIPLY := ./matrix-multiply/target/release/matrix-multiply
+BIN_WEBAPP           := ./webapp/target/release/webapp
+BIN_MONITORING_APP   := ./monitoring-application/target/release/monitoring-application
+BIN_KV_WORKLOAD      := ./kv-workload/target/release/kv-workload
+BIN_MATRIX_MULTIPLY  := ./matrix-multiply/target/release/matrix-multiply
+BIN_SCHEDULER_EVENTS := ./scheduler-events/target/release/scheduler-events
 
 PATH_BG_PIDS  := tmp/bg_pids
 PATH_WORKLOAD := /nvme/data/tmp/vldb/workload
@@ -63,7 +66,10 @@ endef
 .PHONY: webapp
 webapp: tmp-dir
 	$(pprint) "Running webapp"
-	$(call bg, taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP),)
+	$(call bg, \
+		taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP) \
+		--addr-memstore $(ADDR_MEMSTORE_QUERY) \
+	,)
 
 .PHONY: monitoring-application-memstore
 monitoring-application-memstore: tmp-dir
@@ -81,40 +87,47 @@ matrix-multiply: tmp-dir do-sudo
 	$(pprint) "Running monitoring application with memstore"
 	$(call bg, sudo $(BIN_MATRIX_MULTIPLY),)
 
-
 .PHONY: kv-workload
 kv-workload: tmp-dir
 	$(pprint) "Running kv-workload processes"
 	$(call bg, \
-		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 1 \
 		--data-dir $(PATH_WORKLOAD)1 \
 		--data-addrs $(ADDRS_DATA) \
 		,1)
 	$(call bg, \
-		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 3 \
 		--data-dir $(PATH_WORKLOAD)2 \
 		--data-addrs $(ADDRS_DATA) \
 		,2)
 	$(call bg, \
-		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 5 \
 		--data-dir $(PATH_WORKLOAD)3 \
 		--data-addrs $(ADDRS_DATA) \
 		,3)
 	$(call bg, \
-		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 7 \
 		--data-dir $(PATH_WORKLOAD)4 \
 		--data-addrs $(ADDRS_DATA) \
 		,4)
 	$(call bg, \
-		taskset --cpu-list 1-10 $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 9 \
 		--data-dir $(PATH_WORKLOAD)5 \
 		--data-addrs $(ADDRS_DATA) \
 		,5)
+
+.PHONY: scheduler-events
+scheduler-events: tmp-dir do-sudo
+	$(call bg, \
+		sudo taskset --cpu-list $(CPUS_SCHEDULER_EVENTS) \
+		$(BIN_SCHEDULER_EVENTS) \
+		--data-addrs $(ADDRS_DATA) \
+		,)
 
 ###################
 ## BUILD TARGETS ##
@@ -136,6 +149,10 @@ build-kv-workload:
 build-matrix-multiply:
 	$(call rust_build,matrix-multiply,,)
 
+.PHONY: build-scheduler-events
+build-scheduler-events:
+	$(call rust_build,scheduler-events,,)
+
 #############
 ## HELPERS ##
 #############
@@ -143,7 +160,6 @@ build-matrix-multiply:
 .PHONY: tmp-dir
 tmp-dir:
 	mkdir -p tmp
-
 
 .PHONY: stop
 stop:

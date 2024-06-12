@@ -7,12 +7,26 @@ use std::{
 	net::{TcpListener, TcpStream},
 	thread,
 	io::{Read, Write},
-	sync::Arc,
+	sync::{Arc, atomic::{AtomicUsize, Ordering::SeqCst}},
 	time::Duration,
 };
 use clap::*;
-
 use crossbeam::channel::{bounded, Sender, Receiver};
+
+static RECEIVED: AtomicUsize = AtomicUsize::new(0);
+static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+fn stat_counter() {
+	loop {
+		let r = RECEIVED.swap(0, SeqCst);
+		let d = DROPPED.swap(0, SeqCst);
+		let w = WRITTEN.swap(0, SeqCst);
+		println!("received: {} written: {} dropped: {}", r, w, d);
+		std::thread::sleep(Duration::from_secs(1));
+	}
+}
+
 
 fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 	let mut msg_size = [0u8; 8];
@@ -24,10 +38,15 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 			msg_bytes.clear();
 			msg_bytes.resize(sz as usize, 0u8);
 			stream.read_exact(&mut msg_bytes[..]).unwrap();
-			println!("receving {} bytes", sz);
 			let records: RecordBatch =
 				bincode::deserialize(&msg_bytes[..]).unwrap();
-			chan.send(records);
+			let l = records.records.len();
+			RECEIVED.fetch_add(l, SeqCst);
+			if chan.try_send(records).is_err() {
+				DROPPED.fetch_add(l, SeqCst);
+			} else {
+				WRITTEN.fetch_add(l, SeqCst);
+			}
 		}
 	}
 }
@@ -44,25 +63,24 @@ fn query_responder<R: Reader>(mut stream: TcpStream, reader: &mut R) {
 	msg_bytes.clear();
 	msg_bytes.resize(sz as usize, 0u8);
 	stream.read_exact(&mut msg_bytes[..]).unwrap();
-	let requests: Vec<Request> =
+	let request: Request =
 		bincode::deserialize(&msg_bytes[..]).unwrap();
 
 	/*
 	 * Handle the request
 	 */
-	let mut responses = Vec::new();
-	for r in requests {
-		match r {
-			Request::Statistics => unimplemented!(),
-			Request::Data(data_request) =>
-				responses.push(reader.handle_request(&data_request)),
-		}
-	}
+
+	println!("Handling request");
+	let response = match request {
+		Request::Statistics => unimplemented!(),
+		Request::Data(data_request) => reader.handle_request(&data_request),
+	};
+	println!("Response; {:?}", response);
 
 	/*
 	 * Write the response
 	 */
-	let response_bytes = bincode::serialize(&responses).unwrap();
+	let response_bytes = bincode::serialize(&response).unwrap();
 	stream.write_all(&response_bytes.len().to_be_bytes()).unwrap();
 	stream.write_all(&response_bytes).unwrap();
 }
@@ -132,6 +150,8 @@ struct Args {
 fn main() {
 	let args = Arc::new(Args::parse());
 	println!("Args: {:?}", args);
+
+	thread::spawn(stat_counter);
 
 	match args.storage.as_str() {
 		"mem" => {

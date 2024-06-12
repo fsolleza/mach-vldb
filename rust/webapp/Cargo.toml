@@ -20,6 +20,10 @@ crossbeam = "0.8"
 bincode = "1"
 chrono = { version = "0.4.37", features = ["alloc"] }
 fxhash = "0.2.1"
+monitoring-application = { path = "../monitoring-application" }
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage"] }
+
+
 
 #common = { path = "../common" }
 #mach-lib = { path = "../mach-lib" }
@@ -33,11 +37,11 @@ fxhash = "0.2.1"
 #arrow = { version = "46.0.0" }
 #influxdb3_client = { path = "../influxdb/influxdb3_client" }
 
-[lib]
-name = "webapp"
-path = "src/lib.rs"
+#[lib]
+#name = "webapp"
+#path = "src/lib.rs"
 
-[[bin]]
-name = "webapp"
-path = "src/main.rs"
+#[[bin]]
+#name = "webapp"
+#path = "src/main.rs"
 
