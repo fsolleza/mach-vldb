@@ -46,14 +46,21 @@ impl Reader for Memstore {
 
 		let field_grouping: Vec<Field> =
 			request.grouping.iter().copied().collect();
-		let mut group_count: FxHashMap<(u64, [FieldValue; 16]), f64> =
+		let mut group_count: FxHashMap<(u64, [FieldValue; 16]), (u64, u64)> =
 			FxHashMap::default();
 		let mut guard = self.data.lock().unwrap();
 
+		let mut count: u64 = 0;
+
 		for (ts, entry) in guard.iter().rev() {
+			if *ts > request.max_ts_micros {
+				continue;
+			}
 			if *ts < request.min_ts_micros {
 				break;
 			}
+
+			count += 1;
 
 			let mut value_group = empty_field_value_buffer();
 			for (idx, field) in field_grouping.iter().enumerate() {
@@ -62,24 +69,47 @@ impl Reader for Memstore {
 
 			let ts = (*ts) - *ts % 1_000_000;
 
-			let val = group_count.entry((ts, value_group)).or_insert(0.0);
+			let val = group_count
+				.entry((ts, value_group))
+				.or_insert((0u64, 0u64));
 
+			val.0 += 1;
+			val.1 += entry.get_field_value(request.field).as_uint();
+		}
+		drop(guard);
+
+		let mut group_count: FxHashMap<(u64, [FieldValue; 16]), f64> =
 			match request.aggregation {
-				Aggregation::Sum => {
-					let v = entry.get_field_value(request.field);
-					*val += v.as_uint() as f64;
-				},
-				Aggregation::Count => *val += 1.,
-			}
+				Aggregation::Sum => group_count
+					.drain()
+					.map(|(k, v)| (k, v.1 as f64))
+					.collect(),
+				Aggregation::Count => group_count
+					.drain()
+					.map(|(k, v)| (k, v.0 as f64))
+					.collect(),
+				Aggregation::Avg => group_count
+					.drain()
+					.map(|(k, v)| (k, (v.1 as f64) / (v.0 as f64)))
+					.collect(),
+			};
+
+		let mut result = FxHashMap::default();
+		for ((ts, group), v) in group_count {
+			let vec = result.entry(group).or_insert_with(Vec::new);
+			vec.push((ts, v));
+		}
+		for (_, v) in result.iter_mut() {
+			v.sort_by_key(|x| x.0);
+		}
+		println!("number of groups: {}", result.len());
+
+		let mut vec = Vec::new();
+		for (k, v) in result {
+			vec.push(DataResponse { group: k.into(), data: v });
 		}
 
-		let mut result = Vec::new();
-		for (k, v) in group_count {
-			result.push((k, v));
-		}
-		result.sort_by_key(|x| x.0.0);
-
-		Response::Data { data: result }
+		Response::Data(vec)
 	}
 }
 

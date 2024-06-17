@@ -379,6 +379,7 @@ dependencies = [
  "crossbeam",
  "fxhash",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

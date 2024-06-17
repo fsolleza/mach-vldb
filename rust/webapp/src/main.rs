@@ -101,7 +101,5 @@ async fn request_handler(
 		}
 	};
 	
-	let resp = Response::default();
-
-	Json(resp)
+	Json(response)
 }

@@ -16,58 +16,77 @@ body {
 <body>
 
 <div style="margin: auto; display: grid; grid-template-columns: 350px 850px; column-gap: 100px,">
-    <div style="margin: 0; display: grid; grid-template-rows: 280px 200px 50px;">
+    <div style="margin: 0; display: grid; grid-template-rows: 280px 50px 200px;">
+		<div>
 
-            <div style="margin: 0; display: grid; grid-template-columns: 200px 200px;">
-            <div>
-            <p>
-            <span style="font-weight: bold; align: center;">Application Events</span><br>
-            <input type="checkbox" id="kvCount"> Operations / Sec<br>
-            <input type="checkbox" id="kvLat"> Max Latency / Sec
-            </p>
+			<p><b>Target Field</b></p>
 
-            <p>
-            <span style="font-weight: bold; align: center;">Group By</span><br>
-            <input type="checkbox" id="kvCpu"> CPU <br>
-            <input type="checkbox" id="kvTid"> TID <br>
-            </p>
-			</div>
-
-            <div>
-            <p>
-            <span style="font-weight: bold; align: center;">Scheduler Events</span><br>
-            <input type="checkbox" id="schedCount"> Events / Sec <br>
-            </p>
-
-            <p>
-            <span style="font-weight: bold; align: center;">Group By</span><br>
-            <input type="checkbox" id="schedComm"> Command <br>
-            <input type="checkbox" id="schedCpu"> CPU <br>
-            </p>
-
-            </div>
-			<div>
 			<p>
+				<input type="radio" id="ops" name="targetField" value="ops">
+        		<label for="ops">Ops</label>
+				</br>
+
+				<input type="radio" id="latency" name="targetField" value="latency">
+        		<label for="latency">Duration</label>
+				</br>
+
+				<input type="radio" id="latency" name="targetField" value="sched">
+        		<label for="latency">Scheduler Events</label>
+			</p>
+
+			<p><b>Available Aggregation Methods</b> <br></p>
+
+			<p>
+				<div name="aggDiv" id="aggCount" style="display: none">
+					<input type="radio" id="countRadio" name="aggRadio" value="count">
+        			<label for="countRadio">Count</label>
+					</br>
+				</div>
+
+				<div name="aggDiv" id="aggAvg" style="display: none">
+					<input type="radio" id="avgRadio" name="aggRadio" value="avg">
+        			<label for="avgRadio">Average</label>
+					</br>
+				</div>
+
+				<div name="aggDiv" id="aggMax" style="display: none">
+					<input type="radio" id="maxRadio" name="aggRadio" value="max">
+        			<label for="maxRadio">Max</label>
+					</br>
+				</div>
+			</p>
+
+			<p><b>Available Group By Fields</b> <br></p>
+
+			<p>
+				<div name="groupByDiv" id="groupByCpu" style="display: none">
+					<input name="groupByBox" type="checkbox" id="cpuBox">CPU <br>
+				</div>
+
+				<div name="groupByDiv" id="groupByTid" style="display: none">
+					<input name="groupByBox" type="checkbox" id="tidBox">TID <br>
+				</div>
+
+				<div name="groupByDiv" id="groupByComm" style="display: none">
+					<input name="groupByBox" type="checkbox" id="commBox">Comm <br>
+				</div>
+
+			</p>
+
+		</div>
+
+		<div>
 			<input type="button" onclick="updateCharts()" value="Update Chart" id="doAppEvents">
-			</p>
-			</div>
+        	<input type="checkbox" id="pauseRequests"> Check to pause <br>
+		</div>
 
-			<div>
-			<p>
-            <input type="checkbox" id="pauseRequests"> Check to pause <br>
-			</p>
-			</div>
-
-            </div>
-
-        </div>
         <div id="plotD"> </div>
     </div>
     <div>
         <div style="width: auto; display: grid; grid-template-rows: 150px 150px 150px; row-gap: 5px">
-            <div id="plotA"></div>
-            <div id="plotC"></div>
-            <div id="plotB"></div>
+            <div id="summaryPlot"></div>
+            <div id="machPlot"></div>
+            <div id="influxPlot"></div>
         </div>
     </div>
 </div>
@@ -75,12 +94,69 @@ body {
 <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
 <script>
 
-REQUESTS = []
+var START_SECONDS = Math.floor(Date.now() / 1000);
+var REQUESTS = []
 
 function isPaused() {
     var pauseField = document.getElementById('pauseRequests');
     return pauseField.checked;
 }
+
+var TARGET_FIELDS = document.getElementsByName("targetField");
+TARGET_FIELDS.forEach(choice => {
+	choice.onclick = () => {
+		if (choice.checked) {
+			setAggMethod(choice.value);
+			setGroupBy(choice.value);
+		}
+	}
+});
+
+function setAggMethod(value) {
+	document.getElementsByName("aggDiv").forEach(f => {
+		f.style.display = "none";
+	});
+
+	document.getElementsByName("aggRadio").forEach(f => {
+		f.checked = false;
+	});
+
+	if (value == "ops") {
+		document.getElementById("aggCount").style.display = "block";
+	}
+	else if (value == "latency") {
+		document.getElementById("aggAvg").style.display = "block";
+		document.getElementById("aggMax").style.display = "block";
+	}
+	else if (value == "sched") {
+		document.getElementById("aggCount").style.display = "block";
+	}
+}
+
+function setGroupBy(value) {
+
+	document.getElementsByName("groupByDiv").forEach(f => {
+		f.style.display = "none";
+	});
+
+	document.getElementsByName("groupByBox").forEach(f => {
+		f.checked = false;
+	});
+
+	if (value == "ops") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByTid").style.display = "block";
+	}
+	else if (value == "latency") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByTid").style.display = "block";
+	}
+	else if (value == "sched") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByComm").style.display = "block";
+	}
+}
+
 
 setInterval(
 	function() {
@@ -96,34 +172,69 @@ setInterval(
 );
 
 function updateCharts() {
+	summaryPlotUpdate();
+	summaryPlot.render();
+}
 
-	var max = (Date.now() - 1000) * 1000; // in micros
-	var min = max - (60 * 1000000);       // in micros
+var summaryPlotData = [{
+	type: "line",
+	dataPoints: []
+}]
 
-    var kvCount = document.getElementById('kvCount').checked;
-    var kvCpu = document.getElementById('kvCpu').checked;
-    var kvTid = document.getElementById('kvTid').checked;
+var summaryPlot = new CanvasJS.Chart("summaryPlot", {
+    title: {
+        text: "Summary",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+        verticalAlign: "center",
+        horizontalAlign: "left"
+    },
 
-	var field = "None";
-	if (kvCount) {
-		field = "KvOp";
-	} else {
-		return;
-	}
+	axisX: [{
+        interval: 10,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -20,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
+
+	axisY:{
+        title: "QPS",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd"
+	},
+
+    width: 800,
+	data: summaryPlotData
+})
+
+function summaryPlotUpdate() {
+
+	var nowSecs = Math.floor(Date.now() / 1000);
+	var max = (nowSecs - 2) * 1000000;   // in micros
+	var min = max - 1000000;             // in micros
 
 	var req = {
 		"Data": {
 			"storage": "Mem",
-			"field": field,
+			"field": "DurationMicros",
 			"min_ts_micros": min,
 			"max_ts_micros": max,
-			"aggregation": "Sum",
-			"grouping": ["KvOp", "Cpu", "DurationMicros"]
+			"aggregation": "Avg",
+			"grouping": [],
 		}
 	}
 
     var request = JSON.stringify(req);
-	console.log(request);
     var request = new Request("http://localhost:3000/dataRequest", {
         method: 'POST',
         body: request,
@@ -134,728 +245,151 @@ function updateCharts() {
     fetch(request)
 		.then(data => data.json())
 		.then(data => {
-		    console.log("Response", data);
+			timestamp_secs = Math.floor(data.Data[0].data[0][0] / 1000000);
+			value = data.Data[0].data[0][1];
+			updateArray(summaryPlotData[0].dataPoints, timestamp_secs, value);
 		});
+};
+
+function secsToDt(s) {
+	var t = new Date(1970, 0, 1); // Epoch
+    t.setSeconds(s);
+    return t;
 }
 
-//function getData() {
-//	var max = (Date.now() - 1000) * 1000; // in micros
-//	var min = max - (60 * 1000000);       // in micros
-//
-//	for (var i = 0; i < REQUESTS.length; i++) {
-//		if (REQUESTS[i] != "Statistics") {
-//			REQUESTS[i]["Data"]["max_ts_micros"] = max;
-//			REQUESTS[i]["Data"]["min_ts_micros"] = min;
-//		}
-//	}
-//
-//    var request = JSON.stringify(REQUESTS);
-//	console.log(request);
-//    var request = new Request("http://localhost:3000/dataRequest", {
-//        method: 'POST',
-//        body: request,
-//        headers: new Headers({
-//            'Content-Type': 'application/json'
-//        })
-//    });
-//    fetch(request)
-//		.then(data => data.json())
-//		.then(data => {
-//		    console.log("Response", data);
-//		});
-//}
+function updateArray(array, timestamp_secs, value) {
+	if (array.length == 0) {
+		for (var i = 60; i > 0; i--) {
+			array.push({ x: secsToDt(timestamp_secs - i), y: NaN});
+		}
+	}
 
-//var plotD = new CanvasJS.Chart("plotD", {
-//    title: {
-//        text: "% Dropped Samples Per Second",
-//        fontFamily: "arial",
-//        fontSize: 16,
-//        fontWeight: "bold",
-//    },
-//	axisX: [{
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        lineColor: "#ddd",
-//	}],
-//	axisY:{
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        gridColor: "#ddd",
-//        minimum: 0,
-//        maximum: 100,
-//        labelFormatter: function ( e ) {
-//            return e.value + "%";
-//        },
-//	},
-//	data: [
-//        {
-//	    	type: "column",
-//	    	name: "samples per second",
-//	    	dataPoints: [
-//                { y: 100000, label: "Mach" },
-//                { y: 50000, label: "InfluxDB" },
-//            ]
-//	    }
-//    ]
-//})
-//
-//var plotA = new CanvasJS.Chart("plotA", {
-//
-//    title: {
-//        text: "Summary",
-//        fontFamily: "arial",
-//        fontSize: 16,
-//        fontWeight: "bold",
-//        backgroundColor: "#ffffff",
-//        verticalAlign: "center",
-//        horizontalAlign: "left"
-//    },
-//
-//	axisX: [{
-//        interval: 10,
-//        intervalType: "second",
-//        labelWrap: false,
-//        labelTextAlign: "right",
-//        labelAngle: -20,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        lineColor: "#ddd",
-//	}],
-//
-//	axisY:{
-//        title: "QPS",
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        tickPlacement: "inside", //Change it to "outside"
-//        labelPlacement: "inside", //Change it to "outside"
-//        gridColor: "#ddd"
-//	},
-//
-//    width: 800,
-//	data: []
-//})
-//
-//var plotB = new CanvasJS.Chart("plotB", {
-//
-//    title: {
-//        text: "Mach",
-//        fontFamily: "arial",
-//        fontSize: 16,
-//        fontWeight: "bold",
-//        backgroundColor: "#ffffff",
-//        verticalAlign: "center",
-//        horizontalAlign: "left"
-//    },
-//
-//	axisX: [{
-//        interval: 1,
-//        intervalType: "second",
-//        labelWrap: false,
-//        labelTextAlign: "right",
-//        labelAngle: -45,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        lineColor: "#ddd",
-//        labelFormatter: function(){
-//            return " ";
-//        }
-//	}],
-//
-//	axisY:{
-//        title: "QPS",
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        tickPlacement: "inside", //Change it to "outside"
-//        labelPlacement: "inside", //Change it to "outside"
-//        gridColor: "#ddd"
-//	},
-//
-//	axisY2:{
-//        title: "Scheduler Events",
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        tickPlacement: "inside", //Change it to "outside"
-//        labelPlacement: "inside", //Change it to "outside"
-//        visible: false,
-//        gridColor: "#ddd",
-//        minimum: 0,
-//        maximum: 50,
-//        title: "",
-//        tickThickness: 0,
-//        lineThickness: 0,
-//        labelFormatter: function(){
-//           return " ";
-//        },
-//	},
-//    width: 800,
-//	data: []
-//});
-//
-//var plotC = new CanvasJS.Chart("plotC", {
-//
-//    title: {
-//        text: "InfluxDB",
-//        fontFamily: "arial",
-//        fontSize: 16,
-//        fontWeight: "bold",
-//        backgroundColor: "#ffffff",
-//        verticalAlign: "center",
-//        horizontalAlign: "left"
-//    },
-//
-//	axisX: [{
-//        interval: 1,
-//        intervalType: "second",
-//        labelWrap: false,
-//        labelTextAlign: "right",
-//        labelAngle: -45,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        lineColor: "#ddd",
-//        labelFormatter: function(){
-//            return " ";
-//        }
-//	}],
-//
-//	axisY:{
-//        title: "QPS",
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        tickPlacement: "inside", //Change it to "outside"
-//        labelPlacement: "inside", //Change it to "outside"
-//        gridColor: "#ddd",
-//	},
-//
-//	axisY2:{
-//        title: "Scheduler Events",
-//		includeZero: true,
-//        titleFontSize: 14,
-//        labelFontSize: 14,
-//        tickPlacement: "inside", //Change it to "outside"
-//        labelPlacement: "inside", //Change it to "outside"
-//        visible: false,
-//        gridColor: "#ddd",
-//        minimum: 0,
-//        maximum: 50,
-//        title: "",
-//        tickThickness: 0,
-//        lineThickness: 0,
-//        labelFormatter: function(){
-//           return " ";
-//        },
-//	},
-//
-//    width: 800,
-//	data: []
-//});
-//
-//
-//function updatePlotA(points, min_ts, max_ts) {
-//    var newData = []
-//    newData.push({
-//		type: "line",
-//		name: "init",
-//		showInLegend: false,
-//        xValueType: "dateTime",
-//		xValueFormatString: "hh:mm",
-//		dataPoints: points
-//	})
-//    plotA.options.data = newData;
-//}
-//
-//function updatePlotBHistogram(points, min_ts, max_ts, visible) {
-//    if (plotB.options.data[0]) {
-//        plotB.options.data[0].dataPoints = points;
-//    } else {
-//        var newData = []
-//        newData.push({
-//	    	type: "line",
-//	    	name: "init",
-//	    	showInLegend: false,
-//            xValueType: "dateTime",
-//	    	xValueFormatString: "hh:mm",
-//	    	dataPoints: points
-//	    })
-//        plotB.options.data = newData;
-//    }
-//    plotB.options.data[0].visible = visible;
-//}
-//
-//function updatePlotCHistogram(points, min_ts, max_ts, visible) {
-//    if (plotC.options.data[0]) {
-//        plotC.options.data[0].dataPoints = points;
-//    } else {
-//        var newData = []
-//        newData.push({
-//	    	type: "line",
-//	    	name: "init",
-//	    	showInLegend: false,
-//            xValueType: "dateTime",
-//	    	xValueFormatString: "hh:mm",
-//	    	dataPoints: points
-//	    })
-//        plotC.options.data = newData;
-//    }
-//    plotC.options.data[0].visible = visible;
-//}
-//
-////function updatePlotB(newData, min_ts, max_ts) {
-////    var data = newData.data;
-////
-////    // First data is always the histogram
-////    var newScatterData = [];
-////    newScatterData.push(plotB.options.data[0]);
-////
-////    for (i = 0; i < data.length; i++) {
-////        var source = data[i].source;
-////        var sourceData = data[i].data;
-////        var item = {
-////	    	type: "line",
-////	    	name: source,
-////	    	showInLegend: true,
-////            xValueType: "dateTime",
-////	    	xValueFormatString: "hh:mm",
-////	    	dataPoints: sourceData
-////	    };
-////        var grey = new Set();
-////        grey.add("KVCpu(5), ");
-////        grey.add("KVCpu(7), ");
-////        grey.add("KVCpu(9), ");
-////        if (grey.has(source)) {
-////            item["lineColor"] = "grey";
-////            item["color"] = "grey";
-////            item["lineDashType"] = "dot";
-////            item["markerType"] = "none";
-////        }
-////        newScatterData.push(item);
-////    }
-////    plotB.options.data = newScatterData;
-////}
-////
-////function updatePlotC(newData, min_ts, max_ts) {
-////    var data = newData.data;
-////
-////    // First data is always the histogram
-////    var newScatterData = [];
-////    newScatterData.push(plotC.options.data[0]);
-////
-////    for (i = 0; i < data.length; i++) {
-////        var source = data[i].source;
-////        var sourceData = data[i].data;
-////        var item = {
-////	    	type: "line",
-////	    	name: source,
-////	    	showInLegend: true,
-////            xValueType: "dateTime",
-////	    	xValueFormatString: "hh:mm",
-////	    	dataPoints: sourceData
-////	    };
-////        var grey = new Set();
-////        grey.add("KVCpu(5), ");
-////        grey.add("KVCpu(7), ");
-////        grey.add("KVCpu(9), ");
-////        if (grey.has(source)) {
-////            item["lineColor"] = "grey";
-////            item["color"] = "grey";
-////            item["lineDashType"] = "dot";
-////            item["markerType"] = "none";
-////        }
-////        newScatterData.push(item);
-////    }
-////    plotC.options.data = newScatterData;
-////}
-////
-//
-//function updateHistogram(min_ts, max_ts) {
-//    var request = JSON.stringify({
-//        max_ts_millis: max_ts,
-//        min_ts_millis: min_ts
-//    });
-//
-//    var e = document.getElementById("hideHist");
-//    var visible = !e.checked;
-//
-//    var request = new Request("http://localhost:3000/histogram", {
-//        method: 'POST',
-//        body: request,
-//        headers: new Headers({
-//            'Content-Type': 'application/json'
-//        })
-//    });
-//
-//    fetch(request)
-//        .then(data => data.json())
-//        .then(data => {
-//            updatePlotA(data, min_ts, max_ts);
-//            updatePlotBHistogram(data, min_ts, max_ts, visible);
-//            updatePlotCHistogram(data, min_ts, max_ts, visible);
-//        });
-//}
-//
-//function updateY1(plot, newData) {
-//    var data = newData.data;
-//
-//    // First data is always the histogram
-//    var newScatterData = [];
-//    newScatterData.push(plot.options.data[0]);
-//
-//    for (i = 0; i < data.length; i++) {
-//        var source = data[i].source;
-//        var sourceData = data[i].data;
-//        var item = {
-//	    	type: "line",
-//            axisYType: "primary",
-//	    	name: source,
-//	    	showInLegend: true,
-//            xValueType: "dateTime",
-//	    	xValueFormatString: "hh:mm",
-//	    	dataPoints: sourceData,
-//            markerType: "none",
-//	    };
-//        var grey = new Set();
-//        grey.add("KVCpu(5), ");
-//        grey.add("KVCpu(7), ");
-//        grey.add("KVCpu(9), ");
-//        if (grey.has(source)) {
-//            item["lineColor"] = "grey";
-//            item["color"] = "grey";
-//            item["lineDashType"] = "dot";
-//            item["showInLegend"] = false;
-//        }
-//        if (source === "KVCpu(1), ") {
-//            item["lineColor"] = "#90b353";
-//            item["color"] = "#90b353";
-//        }
-//        if (source === "KVCpu(3), ") {
-//            item["lineColor"] = "#b84847";
-//            item["color"] = "#b84847";
-//        }
-//        newScatterData.push(item);
-//    }
-//    for (i = 0; i < plot.options.data.length; i++) {
-//        var d = plot.options.data[i];
-//        if (d.axisYType === "secondary") {
-//            newScatterData.push(d);
-//        }
-//    }
-//    plot.options.data = newScatterData;
-//}
-//
-//function getPlotXRange(plot) {
-//    return {
-//        max: plot.options.axisX[0].maximum,
-//        min: plot.options.axisX[0].minimum,
-//    };
-//}
-//
-//function updateY2(plot, newData) {
-//    var data = newData.data;
-//
-//    // First data is always the histogram
-//    var newScatterData = [];
-//    newScatterData.push(plot.options.data[0]);
-//
-//    for (i = 0; i < data.length; i++) {
-//        var source = data[i].source;
-//        if (source == 'SchedComm("matmul-workload"), ') {
-//            var tmpSourceData = data[i].data;
-//            var sourceData = [];
-//
-//            // write label
-//            for (j = 0; j < tmpSourceData.length; j++) {
-//                if (tmpSourceData[j].y < 50) {
-//                    var dataItem = {
-//                        x: tmpSourceData[j].x,
-//                        y: tmpSourceData[j].y,
-//                        indexLabel: '' + tmpSourceData[j].y,
-//                    };
-//                    sourceData.push(dataItem);
-//                }
-//            }
-//
-//            var item = {
-//	        	type: "scatter",
-//                axisYType: "secondary",
-//	        	name: source,
-//	        	showInLegend: true,
-//                xValueType: "dateTime",
-//	        	xValueFormatString: "hh:mm",
-//	        	dataPoints: sourceData,
-//                markerType: "triangle",
-//                markerSize: 10,
-//                color: "#f58d47",
-//	        };
-//
-//            var grey = new Set();
-//            grey.add("KVCpu(5), ");
-//            grey.add("KVCpu(7), ");
-//            grey.add("KVCpu(9), ");
-//            if (grey.has(source)) {
-//                item["lineColor"] = "grey";
-//                item["color"] = "grey";
-//                item["lineDashType"] = "dot";
-//                showInLegend = false;
-//            }
-//
-//            newScatterData.push(item);
-//        }
-//    }
-//
-//    for (i = 0; i < plot.options.data.length; i++) {
-//        var d = plot.options.data[i];
-//        if (d.axisYType === "primary") {
-//            newScatterData.push(d);
-//        }
-//    }
-//    plot.options.data = newScatterData;
-//}
-//
-//function updateOpsPerSec(min_ts, max_ts) {
-//    var request = [
-//        {
-//            source: "kv",
-//            field: "kvdur",
-//            group: ["kvcpu"],
-//            agg: "count",
-//        }
-//    ];
-//    var req = JSON.stringify({
-//        lines: request,
-//        max_ts_millis: max_ts,
-//        min_ts_millis: min_ts,
-//    });
-//
-//    {
-//        var request = new Request("http://localhost:3000/machHandler", {
-//            method: 'POST',
-//            body: req,
-//            headers: new Headers({
-//                'Content-Type': 'application/json'
-//            })
-//        });
-//        fetch(request)
-//            .then(data => data.json())
-//            .then(data => {
-//                updateY1(plotB, data);
-//            });
-//    }
-//
-//    {
-//        var request = new Request("http://localhost:3000/influxHandler", {
-//            method: 'POST',
-//            body: req,
-//            headers: new Headers({
-//                'Content-Type': 'application/json'
-//            })
-//        });
-//
-//        fetch(request)
-//            .then(data => data.json())
-//            .then(data => {
-//                updateY1(plotC, data);
-//            });
-//    }
-//}
-//
-//function updateSchedEventsPerSec(min_ts, max_ts) {
-//    var request = [
-//        {
-//            source: "sched",
-//            field: "schedcpu",
-//            group: ["schedcomm"],
-//            agg: "count",
-//        }
-//    ];
-//    var req = JSON.stringify({
-//        lines: request,
-//        max_ts_millis: max_ts,
-//        min_ts_millis: min_ts,
-//    });
-//
-//    {
-//        var request = new Request("http://localhost:3000/machHandler", {
-//            method: 'POST',
-//            body: req,
-//            headers: new Headers({
-//                'Content-Type': 'application/json'
-//            })
-//        });
-//        fetch(request)
-//            .then(data => data.json())
-//            .then(data => {
-//                console.log("Mach scheduler data", data);
-//                updateY2(plotB, data);
-//            });
-//    }
-//
-//    {
-//        var request = new Request("http://localhost:3000/influxHandler", {
-//            method: 'POST',
-//            body: req,
-//            headers: new Headers({
-//                'Content-Type': 'application/json'
-//            })
-//        });
-//
-//        fetch(request)
-//            .then(data => data.json())
-//            .then(data => {
-//                console.log("Influx scheduler data", data);
-//                updateY2(plotC, data);
-//            });
-//    }
-//}
-//
-///*
-// * Update the plot data for the three line charts, but don't redraw. That's the
-// * responsibility of the shiftPlots routine
-// */
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        var max = Date.now() - 1000;
-//        var min = max - (1000 * 60); // in millis
-//        updateHistogram(min, max);
-//    }
-//}, 1000);
-//
-//var appByCpuEnabled = false;
-//function enableAppByCpu() {
-//    appByCpuEnabled = true;
-//}
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        var max = Date.now() - 1000;
-//        var min = max - (1000 * 60); // in millis
-//        if (appByCpuEnabled) {
-//            updateOpsPerSec(min, max);
-//        }
-//    }
-//}, 1000);
-//
-//var schedByCommEnabled = false;
-//function enableSchedByComm() {
-//    schedByCommEnabled = true;
-//}
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        var max = Date.now() - 1000;
-//        var min = max - (1000 * 60); // in millis
-//        if (schedByCommEnabled) {
-//            updateSchedEventsPerSec(min, max);
-//        }
-//    }
-//}, 1000);
-//
-///*
-// * Shift and redraw the plots every second
-// */
-//
-//function shiftPlots() {
-//    var max_ts = Date.now() - 1000;
-//    var min_ts = max_ts - (1000 * 60); // in millis
-//    console.log("Shifting plots", min_ts, max_ts);
-//    plotA.options.axisX[0].maximum = max_ts;
-//    plotA.options.axisX[0].minimum = min_ts;
-//
-//    plotB.options.axisX[0].maximum = max_ts;
-//    plotB.options.axisX[0].minimum = min_ts;
-//
-//    plotC.options.axisX[0].maximum = max_ts;
-//    plotC.options.axisX[0].minimum = min_ts;
-//
-//    plotA.render();
-//    plotB.render();
-//    plotC.render();
-//}
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        shiftPlots();
-//    }
-//}, 1000);
-//
-///*
-// * Update the Samples per second plot periodcally
-// */
-//updateSamplesPerSec();
-//function updateSamplesPerSec() {
-//    fetch("http://localhost:3000/samplesPerSecond")
-//        .then(data => data.json())
-//        .then(data => {
-//            console.log("Fetched count data");
-//            var newPoints = [
-//                { y: data[0], label: "Mach" },
-//                { y: data[1], label: "InfluxDB" },
-//            ];
-//            plotD.options.data[0].dataPoints = newPoints;
-//            plotD.render();
-//        });
-//}
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        updateSamplesPerSec();
-//    }
-//}, 1000);
-//
-///*
-// * Enable source collection
-// */
-//
-//function kvEnabled() {
-//    var e = document.getElementById("sourceKV");
-//    return e.checked;
-//}
-//
-//function schedEnabled() {
-//    var e = document.getElementById("sourceSched");
-//    return e.checked;
-//}
-//
-//function updateSources() {
-//    var collectKv = kvEnabled();
-//    var collectSched = schedEnabled();
-//
-//    var request = JSON.stringify({
-//        collectKv: collectKv,
-//        collectSched: collectSched
-//    })
-//
-//    var request = new Request("http://localhost:3000/setCollection", {
-//        method: 'POST',
-//        body: request,
-//        headers: new Headers({
-//            'Content-Type': 'application/json'
-//        })
-//    });
-//    fetch(request)
-//        .then(res => res.json());
-//}
-//
-//setInterval(function() {
-//    var paused = isPaused();
-//    if (!paused) {
-//        updateSources();
-//    }
-//}, 1000);
+	for (var i = 0; i < array.length - 1; i++) {
+		array[i] = array[i+1];
+	}
+	array[array.length - 1] = { x: secsToDt(timestamp_secs), y: value };
+}
 
+var machPlotData = [{
+	type: "line",
+	dataPoints: []
+}]
 
-//document.getElementById("enableSource").onclick = function() {
-//
-//}
+var machPlot = new CanvasJS.Chart("machPlot", {
+    title: {
+        text: "Mach",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+        verticalAlign: "center",
+        horizontalAlign: "left"
+    },
+
+	axisX: [{
+        interval: 10,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -20,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
+
+	axisY:{
+        title: "QPS",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd"
+	},
+
+    width: 800,
+	data: machPlotData
+})
+
+function machPlotUpdate() {
+	count = 60;
+	xVal = 0;
+	yVal = 100;
+
+	for (var j = 0; j < count; j++) {
+		yVal = yVal +  Math.round(5 + Math.random() *(-5-5));
+		machPlotData[0].dataPoints.push({
+			x: xVal,
+			y: yVal
+		});
+		xVal++;
+	}
+
+	machPlot.render();
+};
+
+var influxPlotData = [{
+	type: "line",
+	dataPoints: []
+}]
+
+var influxPlot = new CanvasJS.Chart("influxPlot", {
+    title: {
+        text: "Influx",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+        verticalAlign: "center",
+        horizontalAlign: "left"
+    },
+
+	axisX: [{
+        interval: 10,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -20,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
+
+	axisY:{
+        title: "QPS",
+		includeZero: true,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        tickPlacement: "inside", //Change it to "outside"
+        labelPlacement: "inside", //Change it to "outside"
+        gridColor: "#ddd"
+	},
+
+    width: 800,
+	data: influxPlotData
+})
+
+function influxPlotUpdate() {
+	count = 60;
+	xVal = 0;
+	yVal = 100;
+
+	for (var j = 0; j < count; j++) {
+		yVal = yVal +  Math.round(5 + Math.random() *(-5-5));
+		influxPlotData[0].dataPoints.push({
+			x: xVal,
+			y: yVal
+		});
+		xVal++;
+	}
+
+	influxPlot.render();
+};
+
+//summaryPlotUpdate();
+machPlotUpdate();
+influxPlotUpdate();
+
 
 </script>
 

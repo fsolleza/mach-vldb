@@ -75,7 +75,6 @@ fn query_responder<R: Reader>(mut stream: TcpStream, reader: &mut R) {
 		Request::Statistics => unimplemented!(),
 		Request::Data(data_request) => reader.handle_request(&data_request),
 	};
-	println!("Response; {:?}", response);
 
 	/*
 	 * Write the response

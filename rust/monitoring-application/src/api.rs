@@ -1,5 +1,6 @@
 use serde::*;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
+use fxhash::FxHashMap;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum StorageEngine {
@@ -42,6 +43,7 @@ impl FieldValue {
 pub enum Aggregation {
 	Sum,
 	Count,
+	Avg,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
@@ -67,9 +69,13 @@ pub enum Response {
 	Statistics {
 		percent_complete: u64,
 	},
-	Data {
-		data: Vec<((u64, [FieldValue; 16]), f64)>,
-	}
+	Data(Vec<DataResponse>),
+}
+
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct DataResponse {
+	pub group: Vec<FieldValue>,
+	pub data: Vec<(u64, f64)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]

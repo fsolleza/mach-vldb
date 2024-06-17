@@ -63,6 +63,14 @@ endef
 ## RUN TARGETS ##
 #################
 
+.PHONY: application
+application: \
+	stop \
+	tmp-dir \
+	monitoring-application-memstore \
+	kv-workload \
+	webapp
+
 .PHONY: webapp
 webapp: tmp-dir
 	$(pprint) "Running webapp"
@@ -91,31 +99,31 @@ matrix-multiply: tmp-dir do-sudo
 kv-workload: tmp-dir
 	$(pprint) "Running kv-workload processes"
 	$(call bg, \
-		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 1 \
 		--data-dir $(PATH_WORKLOAD)1 \
 		--data-addrs $(ADDRS_DATA) \
 		,1)
 	$(call bg, \
-		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 3 \
 		--data-dir $(PATH_WORKLOAD)2 \
 		--data-addrs $(ADDRS_DATA) \
 		,2)
 	$(call bg, \
-		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 5 \
 		--data-dir $(PATH_WORKLOAD)3 \
 		--data-addrs $(ADDRS_DATA) \
 		,3)
 	$(call bg, \
-		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 7 \
 		--data-dir $(PATH_WORKLOAD)4 \
 		--data-addrs $(ADDRS_DATA) \
 		,4)
 	$(call bg, \
-		taskset --cpu-list $(CPU_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
+		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
 		--cpu 9 \
 		--data-dir $(PATH_WORKLOAD)5 \
 		--data-addrs $(ADDRS_DATA) \
@@ -152,6 +160,16 @@ build-matrix-multiply:
 .PHONY: build-scheduler-events
 build-scheduler-events:
 	$(call rust_build,scheduler-events,,)
+
+.PHONY: build-all
+build-all: tmp-dir \
+	build-webapp \
+	build-monitoring-application \
+	build-kv-workload \
+	build-matrix-multiply \
+	build-scheduler-events
+	$(pprint) Building done
+
 
 #############
 ## HELPERS ##
