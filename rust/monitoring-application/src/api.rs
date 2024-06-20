@@ -4,7 +4,8 @@ use fxhash::FxHashMap;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum StorageEngine {
-	Mem
+	Mem,
+	Mach
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
@@ -13,6 +14,9 @@ pub enum Field {
 	DurationMicros,
 	Cpu,
 	TimestampMicros,
+	SchedulerEvent,
+	Tid,
+	Comm,
 
 	#[default]
 	None
@@ -20,7 +24,10 @@ pub enum Field {
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 pub enum FieldValue {
-	Uint(u64),
+	Cpu(u64),
+	KvOp(u64),
+	DurationMicros(u64),
+	TimestampMicros(u64),
 	None,
 }
 
@@ -31,19 +38,23 @@ impl Default for FieldValue {
 }
 
 impl FieldValue {
-	pub fn as_uint(&self) -> u64 {
+	pub fn as_uint(&self) -> Option<u64> {
 		match self {
-			FieldValue::Uint(x) => *x,
-			_ => panic!("Error casting Field value to int"),
+			FieldValue::Cpu(x) => Some(*x),
+			FieldValue::KvOp(x) => Some(*x),
+			FieldValue::DurationMicros(x) => Some(*x),
+			FieldValue::TimestampMicros(x) => Some(*x),
+			_ => None,
 		}
 	}
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub enum Aggregation {
-	Sum,
+	Max,
 	Count,
 	Avg,
+	Sum,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
@@ -122,10 +133,10 @@ pub struct Record {
 impl Record {
 	pub fn get_field_value(&self, field: Field) -> FieldValue {
 		match field {
-			Field::KvOp => FieldValue::Uint(self.kv_op as u64),
-			Field::Cpu => FieldValue::Uint(self.cpu),
-			Field::DurationMicros => FieldValue::Uint(self.duration_micros),
-			Field::TimestampMicros => FieldValue::Uint(self.timestamp_micros),
+			Field::KvOp => FieldValue::KvOp(self.kv_op as u64),
+			Field::Cpu => FieldValue::Cpu(self.cpu),
+			Field::DurationMicros => FieldValue::DurationMicros(self.duration_micros),
+			Field::TimestampMicros => FieldValue::TimestampMicros(self.timestamp_micros),
 			_ => unimplemented!(),
 		}
 	}

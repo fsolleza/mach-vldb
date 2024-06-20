@@ -46,7 +46,10 @@ impl Reader for Memstore {
 
 		let field_grouping: Vec<Field> =
 			request.grouping.iter().copied().collect();
-		let mut group_count: FxHashMap<(u64, [FieldValue; 16]), (u64, u64)> =
+
+		// Keep values for count, sum, max
+		let mut group_count:
+			FxHashMap<(u64, [FieldValue; 16]), (u64, u64, u64)> =
 			FxHashMap::default();
 		let mut guard = self.data.lock().unwrap();
 
@@ -71,10 +74,13 @@ impl Reader for Memstore {
 
 			let val = group_count
 				.entry((ts, value_group))
-				.or_insert((0u64, 0u64));
+				.or_insert((0u64, 0u64, 0u64));
 
 			val.0 += 1;
-			val.1 += entry.get_field_value(request.field).as_uint();
+			if let Some(x) = entry.get_field_value(request.field).as_uint() {
+				val.1 += x;
+				val.2 = val.2.max(x);
+			}
 		}
 		drop(guard);
 
@@ -91,6 +97,10 @@ impl Reader for Memstore {
 				Aggregation::Avg => group_count
 					.drain()
 					.map(|(k, v)| (k, (v.1 as f64) / (v.0 as f64)))
+					.collect(),
+				Aggregation::Max => group_count
+					.drain()
+					.map(|(k, v)| (k, v.2 as f64))
 					.collect(),
 			};
 

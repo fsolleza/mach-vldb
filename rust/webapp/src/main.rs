@@ -33,6 +33,9 @@ use clap::*;
 struct Args {
 	#[arg(short, long)]
 	addr_memstore: String,
+
+	#[arg(short, long)]
+	addr_mach: String,
 }
 
 lazy_static! {
@@ -83,6 +86,8 @@ async fn request_handler(
 			let mut stream = match x.storage {
 				StorageEngine::Mem => 
 					TcpStream::connect(&ARGS.addr_memstore).await.unwrap(),
+				StorageEngine::Mach => 
+					TcpStream::connect(&ARGS.addr_mach).await.unwrap(),
 			};
 
 			// Send request

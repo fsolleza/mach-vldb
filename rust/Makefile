@@ -16,9 +16,13 @@ endif
 ADDR_MEMSTORE_DATA  := 0.0.0.0:3501
 ADDR_MEMSTORE_QUERY := 0.0.0.0:3511
 
-ADDRS_DATA          := 0.0.0.0:3501
+ADDR_MACH_DATA  := 0.0.0.0:3502
+ADDR_MACH_QUERY := 0.0.0.0:3512
+
+ADDRS_DATA          := 0.0.0.0:3501 0.0.0.0:3502
 
 CPUS_MEMSTORE         := 50-53
+CPUS_MACH             := 54-60
 CPUS_WEBAPP           := 10-15
 CPUS_KV_WORKLOAD      := 1-10
 CPUS_SCHEDULER_EVENTS := 21-25
@@ -44,7 +48,7 @@ define bg
 		echo $@,$$! >> $(PATH_BG_PIDS))
 	$(shell stty sane)
 	$(pprint) "Running $@"
-	$(pprint) "Outputting to tmp/log-$@"
+	$(pprint) "Outputting to tmp/log-$@$(2)"
 endef
 
 define rust_build
@@ -68,6 +72,7 @@ application: \
 	stop \
 	tmp-dir \
 	monitoring-application-memstore \
+	monitoring-application-mach \
 	kv-workload \
 	webapp
 
@@ -77,6 +82,7 @@ webapp: tmp-dir
 	$(call bg, \
 		taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP) \
 		--addr-memstore $(ADDR_MEMSTORE_QUERY) \
+		--addr-mach $(ADDR_MACH_QUERY) \
 	,)
 
 .PHONY: monitoring-application-memstore
@@ -89,6 +95,18 @@ monitoring-application-memstore: tmp-dir
 		--data-addr $(ADDR_MEMSTORE_DATA) \
 		--query-addr $(ADDR_MEMSTORE_QUERY) \
 	,)
+
+.PHONY: monitoring-application-mach
+monitoring-application-mach: tmp-dir
+	$(pprint) "Running monitoring application with mach"
+	$(call bg, \
+		taskset --cpu-list $(CPUS_MACH) \
+		$(BIN_MONITORING_APP) \
+		--storage mach \
+		--data-addr $(ADDR_MACH_DATA) \
+		--query-addr $(ADDR_MACH_QUERY) \
+	,)
+
 
 .PHONY: matrix-multiply
 matrix-multiply: tmp-dir do-sudo

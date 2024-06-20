@@ -157,6 +157,10 @@ fn main() {
 			let memstorage = Memstore::new();
 			init_storage(&args.data_addr, &args.query_addr, memstorage);
 		},
+		"mach" => {
+			let memstorage = Memstore::new();
+			init_storage(&args.data_addr, &args.query_addr, memstorage);
+		},
 		_ => panic!("unhandled storage argument"),
 	}
 

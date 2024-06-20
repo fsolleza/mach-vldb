@@ -256,7 +256,7 @@ struct Args {
 	#[arg(short, long)]
 	data_dir: String,
 
-	#[arg(short, long)]
+	#[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
 	data_addrs: Vec<String>,
 }
 
