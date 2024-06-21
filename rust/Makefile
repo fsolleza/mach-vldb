@@ -193,6 +193,21 @@ build-all: tmp-dir \
 ## HELPERS ##
 #############
 
+.PHONY: clean-code
+clean-code:
+	cd common; cargo clean;
+	cd influxdb; cargo clean;
+	cd influx_example; cargo clean;
+	cd influx-server; cargo clean;
+	cd kv-workload; cargo clean;
+	cd mach-client; cargo clean;
+	cd mach-lib; cargo clean;
+	cd mach-server; cargo clean;
+	cd matrix-multiply; cargo clean;
+	cd monitoring-application; cargo clean;
+	cd scheduler-events; cargo clean;
+	cd webapp; cargo clean;
+
 .PHONY: tmp-dir
 tmp-dir:
 	mkdir -p tmp

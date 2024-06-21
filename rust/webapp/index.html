@@ -10,12 +10,37 @@ body {
    font-family: Arial !important;
    font-size: small;
 }
+
+.plotTitleOuter {
+	height: 150px;
+	width: 100px;
+}
+
+.plotTitleContainer {
+	height: 150px;
+	width: 100px;
+	display: table-cell;
+	vertical-align: middle;
+}
+
+.plotTitle {
+	display: inner-block;
+	float:right;
+	writing-mode: sideways-lr;
+	text-orientation: mixed;
+	font-weight: bold;
+	padding-right: 10px;
+	font-size: medium;
+}
+
+
+
 </style>
 </head>
 
 <body>
 
-<div style="margin: auto; display: grid; grid-template-columns: 350px 850px; column-gap: 100px,">
+<div style="margin: auto; display: grid; grid-template-columns: 200px 100px 1000px; column-gap: 100px,">
     <div style="margin: 0">
 		<div>
 			<p><b>Target Storage</b></p>
@@ -115,12 +140,30 @@ body {
 		</div>
     </div>
     <div>
-        <div id="summaryPlot" style="height: 150px;"></div>
-        <div id="plotsDiv">
-            <div name="plot" id="plot0"  style="height: 150px;">
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="summaryTitle"> Summary Title </div>
 			</div>
-            <div name="plot" id="plot1"  style="height: 150px;"></div>
-        </div>
+		</div>
+
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="plot0Title"> Plot 0 </div>
+			</div>
+		</div>
+
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="plot1Title"> Plot 1 </div>
+			</div>
+		</div>
+
+
+    </div>
+    <div>
+        <div id="summaryPlot" style="height: 150px;"></div>
+        <div name="plot" id="plot0"  style="height: 150px;"></div>
+        <div name="plot" id="plot1"  style="height: 150px;"></div>
     </div>
 </div>
 
@@ -217,7 +260,7 @@ var summaryPlotData = [{
 
 var summaryPlot = new CanvasJS.Chart("summaryPlot", {
     title: {
-        text: "Summary",
+        text: "",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
@@ -236,6 +279,10 @@ var summaryPlot = new CanvasJS.Chart("summaryPlot", {
         labelFontSize: 14,
         lineColor: "#ddd",
 	}],
+
+	axisY: {
+		labelFormatter: labelFormatter,
+	},
 
     width: 800,
 	data: summaryPlotData
@@ -277,19 +324,20 @@ document.getElementsByName("plot").forEach(f => {
 	var plotsData = [];
 	var plot = new CanvasJS.Chart(f.id, {
 		title: {
-		    text: "Plot1",
+		    text: "",
 		    fontFamily: "arial",
-		    fontSize: 16,
-		    fontWeight: "bold",
+		    fontSize: 12,
+		    fontWeight: "normal",
 		    backgroundColor: "#ffffff",
-		    verticalAlign: "center",
-		    horizontalAlign: "left"
+		    verticalAlign: "top",
+		    horizontalAlign: "center"
 		},
 
 		legend: {
 			horizontalAlign: "center", // "center" , "right"
        		verticalAlign: "bottom",  // "top" , "bottom"
-       		fontSize: 15
+       		fontSize: 12,
+			itemclick: toggleDataSeries
 		},
 
 		axisX: [
@@ -307,11 +355,17 @@ document.getElementsByName("plot").forEach(f => {
         		}
 			}
 		],
+
+		axisY: {
+			labelFormatter: labelFormatter,
+		},
+
 		width: 800,
 		data: [],
 	})
 	plot.render();
-	PLOTS.push({ request: null, plot: plot, groups: []});
+	title = document.getElementById(f.id + "Title");
+	PLOTS.push({ request: null, plot: plot, groups: [], title: title});
 });
 
 function resetPlot(plotId) {
@@ -421,6 +475,9 @@ function updatePlot(plotId, min_ts_micros, max_ts_micros) {
 function renderPlot(plotId, newData) {
 	var plot = PLOTS[plotId].plot;
 	var groups = PLOTS[plotId].groups;
+	var req = PLOTS[plotId].request;
+	var title = PLOTS[plotId].title;
+	title.innerHTML = req.aggregation + "</br>" + req.field + "</br>" + req.storage;
 
 	console.log("Number of groups", newData.Data.length);
 	for (var i = 0; i < newData.Data.length; i++) {
@@ -432,9 +489,13 @@ function renderPlot(plotId, newData) {
 		// Setup a new empty data entry. If the group already exists, replace
 		// with the already existing data entry.
 		var group = item.group;
+		var legendText = generateLegend(group);
 		var data = {
 			type: "line",
 			dataPoints: [],
+			showInLegend: true,
+			name: legendText,
+			legendText: "{name}",
 		};
 
 		// Check to see if the group already exists in the plot. if it does, use
@@ -488,7 +549,20 @@ function generateLabel(x, y, group) {
 			label.push(g);
 		}
 	});
+	label.push({timestamp: x, value: y});
     return JSON.stringify(label);
+}
+
+function generateLegend(group) {
+	var label = "";
+	group.forEach(g => {
+		if (g !== "None") {
+			console.log("Stringifying", g, JSON.stringify(g));
+			label += String(JSON.stringify(g));
+		}
+	});
+	console.log("Legend will be ", label);
+	return String(label);
 }
 
 function requestPlotsUpdate(min_ts_micros, max_ts_micros) {
@@ -538,6 +612,34 @@ var deepEqual = function (x, y) {
   }
   else
     return false;
+}
+
+function labelFormatter(e) {
+	
+	return CanvasJS.formatNumber(e.value, "#.00E+0");
+
+	//var s = "";
+
+	//if (e.value >= 1000000) {
+	//	s = String((e.value / 1000000).toFixed(3)) + " M";
+	//}
+	//else if (e.value >= 1000) {
+	//	s = String((e.value / 1000).toFixed(3)) + " K";
+	//}
+	//else {
+	//	s = String(e.value);
+	//}
+
+	//return s;
+}
+
+function toggleDataSeries(e){
+	if (typeof(e.dataSeries.visible) === "undefined" || e.dataSeries.visible) {
+		e.dataSeries.visible = false;
+	}
+	else{
+		e.dataSeries.visible = true;
+	}
 }
 
 
