@@ -55,39 +55,24 @@ fn random_core_affinity<const T: usize>() -> usize {
 }
 
 const N: usize = 768; // 512mb matrix
-const THREADS: usize = 1;
-const THREAD_CHOICE: [usize; 2] = [1, 3];
+const CPU: usize = 6;
 
 fn main() {
 	println!("HERE");
-	let mut handles = Vec::new();
-	for i in 0..THREADS {
-		let h = thread::spawn(move || {
-			let mut idx = 0;
-			let mut rng = thread_rng();
-			set_core_affinity(THREAD_CHOICE[idx]);
-			assert!(set_current_thread_priority(ThreadPriority::Max).is_ok());
-			let a: Matrix<N> = Matrix::random();
-			let b: Matrix<N> = Matrix::random();
-			let mut print_a = true;
-			let mut total = 0.;
-			loop {
-				idx = if idx == 0 { 1 } else { 0 };
-				let cpu = THREAD_CHOICE[idx] as usize;
-				set_core_affinity(THREAD_CHOICE[idx] as usize);
-				let now = Instant::now();
-				total = a.multiply(&b).sum();
-				let dur = now.elapsed().as_secs_f64();
-				println!("Total: {}, cpu: {}, duration: {}", total, cpu, dur);
-				let secs: u64 = rng.gen_range(20u64..30);
-				thread::sleep(Duration::from_secs(secs));
-				println!("About to multiply");
-				thread::sleep(Duration::from_secs(1));
-			}
-		});
-		handles.push(h);
-	}
-	for h in handles {
-		h.join();
+	let mut idx = 0;
+	let mut rng = thread_rng();
+	set_core_affinity(CPU);
+	let a: Matrix<N> = Matrix::random();
+	let b: Matrix<N> = Matrix::random();
+	let mut print_a = true;
+	let mut total = 0.;
+	loop {
+		thread::sleep(Duration::from_secs(5));
+		let e = Instant::now();
+		let mut c = 0;
+		while e.elapsed() < Duration::from_millis(100) {
+			c += 1;
+		}
+		println!("Total: {}", c);
 	}
 }

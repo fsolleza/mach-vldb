@@ -74,6 +74,7 @@ application: \
 	monitoring-application-memstore \
 	monitoring-application-mach \
 	kv-workload \
+	matrix-multiply \
 	webapp
 
 .PHONY: webapp
@@ -116,36 +117,29 @@ matrix-multiply: tmp-dir do-sudo
 .PHONY: kv-workload
 kv-workload: tmp-dir
 	$(pprint) "Running kv-workload processes"
-	$(call bg, \
-		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
-		--cpu 1 \
-		--data-dir $(PATH_WORKLOAD)1 \
-		--data-addrs $(ADDRS_DATA) \
-		,1)
-	$(call bg, \
-		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
-		--cpu 3 \
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 2 \
 		--data-dir $(PATH_WORKLOAD)2 \
 		--data-addrs $(ADDRS_DATA) \
 		,2)
-	$(call bg, \
-		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
-		--cpu 5 \
-		--data-dir $(PATH_WORKLOAD)3 \
-		--data-addrs $(ADDRS_DATA) \
-		,3)
-	$(call bg, \
-		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
-		--cpu 7 \
+
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 4 \
 		--data-dir $(PATH_WORKLOAD)4 \
 		--data-addrs $(ADDRS_DATA) \
 		,4)
-	$(call bg, \
-		taskset --cpu-list $(CPUS_KV_WORKLOAD) $(BIN_KV_WORKLOAD) \
-		--cpu 9 \
-		--data-dir $(PATH_WORKLOAD)5 \
+
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 6 \
+		--data-dir $(PATH_WORKLOAD)6 \
 		--data-addrs $(ADDRS_DATA) \
-		,5)
+		,6)
+
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 8 \
+		--data-dir $(PATH_WORKLOAD)8 \
+		--data-addrs $(ADDRS_DATA) \
+		,8)
 
 .PHONY: scheduler-events
 scheduler-events: tmp-dir do-sudo

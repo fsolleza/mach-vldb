@@ -1,17 +1,15 @@
-# Webapp and collector
 
-$ ./run_influx.sh
-$ ./setup_influx.sh
-$ cd webapp; cargo run --release
+## Repo Setup
 
-# Workload
+'''
+git clone git@github.com:fsolleza/mach-vldb.git
+cd mach-vldb
+git submodule update --init --recursive
 
-$ cd workload
-$ cargo build --release
-$ cargo run release --bin gather
+# build all components
+make build-all
 
-# These are currently hardcoded
-
-$ cargo run --release --bin kv-workload -- --cpu 15
-$ cargo run --release --bin kv-workload -- --cpu 1
-$ sudo ./target/release/matmul-workload
+# runs the whole application.
+# See Makefile for configuration and individual make commands
+make application
+'''

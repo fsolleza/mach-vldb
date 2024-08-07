@@ -142,6 +142,12 @@ fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
 	}
 }
 
+fn percentile(data: &mut [u64], percentile: f64) -> u64 {
+	data.sort();
+	let idx = (percentile * data.len() as f64);
+	data[idx as usize]
+}
+
 fn do_work(
 	db: DB,
 	read_ratio: f64,
@@ -151,6 +157,10 @@ fn do_work(
 	monitoring_tx: Sender<Vec<Record>>,
 	freeing_tx: Sender<Vec<u8>>,
 ) {
+
+	let mut read_latencies: Vec<u64> = Vec::new();
+	let mut write_latencies: Vec<u64> = Vec::new();
+
 	lazy_static! {
 		static ref DATA: Vec<u8> = random_data(1024 * 4);
 	}
@@ -165,19 +175,31 @@ fn do_work(
 	let mut records = Vec::new();
 	let mut flush_counter = 0;
 	let mut in_cpu = true;
-	let mut current_cpu = cpu;
-	set_core_affinity(current_cpu as usize);
+	let current_cpu = cpu;
+
+	let mut start = Instant::now();
 	loop {
-		let switch_cpu: f64 = rng.gen();
-		if switch_cpu < 0.1 {
-			if in_cpu {
-				current_cpu = cpu + 1;
-				in_cpu = false;
-			} else {
-				current_cpu = cpu;
-				in_cpu = true;
+		if cpu == 6 {
+			let e = start.elapsed();
+			let mut tails = (0, 0);
+			if e > Duration::from_secs(1) {
+				if read_latencies.len() > 0 {
+					let r999 = percentile(read_latencies.as_mut(), 0.999999);
+					let r990 = percentile(read_latencies.as_mut(), 0.999990);
+					let r900 = percentile(read_latencies.as_mut(), 0.999900);
+					println!(">> Read tail: {} {} {}", r900, r990, r999);
+				}
+
+				if write_latencies.len() > 0 {
+					let w999 = percentile(write_latencies.as_mut(), 0.999999);
+					let w990 = percentile(write_latencies.as_mut(), 0.999990);
+					let w900 = percentile(write_latencies.as_mut(), 0.999900);
+					println!(">> Write tail: {} {} {}", w900, w990, w999);
+				}
+				read_latencies.clear();
+				write_latencies.clear();
+				start = Instant::now();
 			}
-			set_core_affinity(current_cpu as usize);
 		}
 
 		let key: u64 = rng.gen_range(min_key..max_key);
@@ -189,6 +211,8 @@ fn do_work(
 				freeing_tx.send(vec).unwrap();
 
 				let dur_micros = now.elapsed().as_micros() as u64;
+				read_latencies.push(dur_micros);
+
 				let timestamp = micros_since_epoch();
 
 				records.push({
@@ -217,6 +241,7 @@ fn do_work(
 		flush_counter += 1;
 		let dur_micros = now.elapsed().as_micros() as u64;
 		let timestamp = micros_since_epoch();
+		write_latencies.push(dur_micros);
 
 		records.push({
 			let mut r = Record::default();
@@ -271,6 +296,7 @@ fn main() {
 
 	let (freeing_tx, freeing_rx) = bounded(1024);
 	thread::spawn(move || {
+		//set_core_affinity(cpu as usize);
 		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 		some_sink(freeing_rx);
 	});
@@ -278,22 +304,42 @@ fn main() {
 	let (monitoring_tx, monitoring_rx) = bounded(1024);
 	let addrs = args.data_addrs.clone();
 	thread::spawn(move || {
+		//set_core_affinity(cpu as usize);
 		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 		sender(monitoring_rx, addrs);
 	});
 
 	let mut handles = Vec::new();
-	//let db_path = format!("/nvme/data/tmp/2024-vldb-{}", cpu);
 	let _ = std::fs::remove_dir_all(&db_path);
 	let db = setup_db(db_path.into()); // Arc::new(DashMap::new());
-	handles.push(thread::spawn(move || {
-		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
-		let key_low = 0;
-		let key_high = 4096;
-		do_work(db, read_ratio, key_low, key_high, cpu, monitoring_tx, freeing_tx);
-	}));
+		let cpu_id = args.cpu as usize;
+		let db = db.clone();
+		let monitoring_tx = monitoring_tx.clone();
+		let freeing_tx = freeing_tx.clone();
+		handles.push(thread::spawn(move || {
+			println!("Thread id {}", cpu_id);
+			set_core_affinity(cpu_id);
+			assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
+			let key_low = 0;
+			let key_high = 4096;
+			do_work(db, read_ratio, key_low, key_high, cpu_id as u64, monitoring_tx, freeing_tx);
+		}));
 
 	init_counter();
+
+	//thread::spawn(move || {
+	//	loop {
+	//		set_core_affinity(6);
+	//		thread::sleep(Duration::from_secs(5));
+	//		let e = Instant::now();
+	//		println!("Doing busy work");
+	//		let mut c = 0;
+	//		while e.elapsed().as_secs() < 2 {
+	//			c += 1;
+	//		}
+	//		println!("busy work sink: {}", c);
+	//	}
+	//});
 
 	for h in handles {
 		let _ = h.join();
