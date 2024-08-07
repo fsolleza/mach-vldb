@@ -74,7 +74,6 @@ application: \
 	monitoring-application-memstore \
 	monitoring-application-mach \
 	kv-workload \
-	matrix-multiply \
 	webapp
 
 .PHONY: webapp
@@ -123,23 +122,6 @@ kv-workload: tmp-dir
 		--data-addrs $(ADDRS_DATA) \
 		,2)
 
-	$(call bg, $(BIN_KV_WORKLOAD) \
-		--cpu 4 \
-		--data-dir $(PATH_WORKLOAD)4 \
-		--data-addrs $(ADDRS_DATA) \
-		,4)
-
-	$(call bg, $(BIN_KV_WORKLOAD) \
-		--cpu 6 \
-		--data-dir $(PATH_WORKLOAD)6 \
-		--data-addrs $(ADDRS_DATA) \
-		,6)
-
-	$(call bg, $(BIN_KV_WORKLOAD) \
-		--cpu 8 \
-		--data-dir $(PATH_WORKLOAD)8 \
-		--data-addrs $(ADDRS_DATA) \
-		,8)
 
 .PHONY: scheduler-events
 scheduler-events: tmp-dir do-sudo

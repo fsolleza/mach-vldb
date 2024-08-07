@@ -62,8 +62,6 @@ fn main() {
 	let mut idx = 0;
 	let mut rng = thread_rng();
 	set_core_affinity(CPU);
-	let a: Matrix<N> = Matrix::random();
-	let b: Matrix<N> = Matrix::random();
 	let mut print_a = true;
 	let mut total = 0.;
 	loop {

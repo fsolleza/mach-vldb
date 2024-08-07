@@ -12,8 +12,8 @@ use std::{
 	},
 	thread,
 	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-	net::TcpStream,
-	io::Write,
+	net::{TcpListener, TcpStream},
+	io::prelude::*,
 };
 use thread_priority::*;
 use monitoring_application::*;
@@ -32,6 +32,7 @@ static WRITE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 static WRITE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
+static TARGET_RPS: AtomicUsize = AtomicUsize::new(10000);
 
 //static OPS_MIN_RATE: AtomicUsize = AtomicUsize::new(0);
 
@@ -110,6 +111,7 @@ fn do_read(db: &DB, key: u64) -> Option<Vec<u8>> {
 fn do_write(db: &DB, key: u64, slice: &[u8]) {
 	let mut opt = WriteOptions::default();
 	opt.set_sync(false);
+	opt.disable_wal(true);
 	let now = Instant::now();
 	compiler_fence(SeqCst);
 	db.put_opt(key.to_be_bytes(), slice, &opt).unwrap();
@@ -130,8 +132,7 @@ fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
 	println!("Connected!");
 	while let Ok(records) = rx.recv() {
 		let records = RecordBatch {
-			record_type: RecordType::KVOp,
-			records,
+			inner: records,
 		};
 		let data = serialize(&records);
 		let sz = data.len();
@@ -150,115 +151,76 @@ fn percentile(data: &mut [u64], percentile: f64) -> u64 {
 
 fn do_work(
 	db: DB,
-	read_ratio: f64,
-	min_key: u64,
 	max_key: u64,
 	cpu: u64,
 	monitoring_tx: Sender<Vec<Record>>,
 	freeing_tx: Sender<Vec<u8>>,
 ) {
 
-	let mut read_latencies: Vec<u64> = Vec::new();
-	let mut write_latencies: Vec<u64> = Vec::new();
-
-	lazy_static! {
-		static ref DATA: Vec<u8> = random_data(1024 * 4);
-	}
-
-	let data: &'static [u8] = DATA.as_slice();
+	let mut latencies: Vec<u64> = Vec::new();
 
 	let mut rng = thread_rng();
 
-	let bounds = random_idx_bounds(data.len(), &mut rng);
 	let mut tid = std::process::id() as u64;
 
 	let mut records = Vec::new();
 	let mut flush_counter = 0;
 	let mut in_cpu = true;
-	let current_cpu = cpu;
+	let cpu_id = cpu;
 
 	let mut start = Instant::now();
-	loop {
-		if cpu == 6 {
-			let e = start.elapsed();
-			let mut tails = (0, 0);
-			if e > Duration::from_secs(1) {
-				if read_latencies.len() > 0 {
-					let r999 = percentile(read_latencies.as_mut(), 0.999999);
-					let r990 = percentile(read_latencies.as_mut(), 0.999990);
-					let r900 = percentile(read_latencies.as_mut(), 0.999900);
-					println!(">> Read tail: {} {} {}", r900, r990, r999);
-				}
 
-				if write_latencies.len() > 0 {
-					let w999 = percentile(write_latencies.as_mut(), 0.999999);
-					let w990 = percentile(write_latencies.as_mut(), 0.999990);
-					let w900 = percentile(write_latencies.as_mut(), 0.999900);
-					println!(">> Write tail: {} {} {}", w900, w990, w999);
-				}
-				read_latencies.clear();
-				write_latencies.clear();
-				start = Instant::now();
-			}
+	for key in 0..max_key {
+		let data = random_data(1024 * 4);
+		do_write(&db, key, data.as_slice());
+	}
+
+	let mut rate_limiter = {
+		let r = 1. / (TARGET_RPS.load(SeqCst) as f64);
+		Duration::from_secs_f64(r)
+	};
+
+	let mut start_time = Instant::now();
+	for i in 0..{
+
+		// Check rate and set new rate if changed
+		if (i > 0) && (i % 1024 == 0) {
+			let expected = rate_limiter * i;
+			while expected > start_time.elapsed(){}
+			rate_limiter = {
+				let r = 1. / (TARGET_RPS.load(SeqCst) as f64);
+				Duration::from_secs_f64(r)
+			};
 		}
 
-		let key: u64 = rng.gen_range(min_key..max_key);
-		let read: bool = rng.gen::<f64>() < read_ratio;
+		let key: u64 = rng.gen_range(0..max_key);
 
 		let now = Instant::now();
-		if read {
-			if let Some(vec) = do_read(&db, key) {
-				freeing_tx.send(vec).unwrap();
+		if let Some(vec) = do_read(&db, key) {
+			freeing_tx.send(vec).unwrap();
 
-				let dur_micros = now.elapsed().as_micros() as u64;
-				read_latencies.push(dur_micros);
+			let dur_micros = now.elapsed().as_micros() as u64;
+			latencies.push(dur_micros);
 
-				let timestamp = micros_since_epoch();
+			let timestamp = micros_since_epoch();
 
-				records.push({
-					let mut r = Record::default();
-					r.record_type = RecordType::KVOp;
-					r.timestamp_micros = timestamp;
-					r.kv_op = KVOp::Read;
-					r.cpu = current_cpu;
-					r.duration_micros = dur_micros;
-					r
-				});
+			records.push({
+				let mut r = Record::KVOp {
+					cpu: cpu_id,
+					timestamp_micros: timestamp,
+					duration_micros: dur_micros,
+				};
+				r
+			});
 
-				let l = records.len();
-				if l > 1024 {
-					if monitoring_tx.try_send(records).is_err() {
-						DROPPED.fetch_add(l, SeqCst);
-					}
-					records = Vec::new();
+			let l = records.len();
+			if l > 1024 {
+				if monitoring_tx.try_send(records).is_err() {
+					DROPPED.fetch_add(l, SeqCst);
 				}
-				continue;
+				records = Vec::new();
 			}
-		}
-
-		let slice = &data[bounds.0..bounds.1];
-		do_write(&db, key, slice);
-		flush_counter += 1;
-		let dur_micros = now.elapsed().as_micros() as u64;
-		let timestamp = micros_since_epoch();
-		write_latencies.push(dur_micros);
-
-		records.push({
-			let mut r = Record::default();
-			r.record_type = RecordType::KVOp;
-			r.timestamp_micros = timestamp;
-			r.kv_op = KVOp::Write;
-			r.cpu = current_cpu;
-			r.duration_micros = dur_micros;
-			r
-		});
-
-		let l = records.len();
-		if l > 1024 {
-			if monitoring_tx.try_send(records).is_err() {
-				DROPPED.fetch_add(l, SeqCst);
-			}
-			records = Vec::new();
+			continue;
 		}
 	}
 }
@@ -273,6 +235,21 @@ fn some_sink(rx: Receiver<Vec<u8>>) {
 	}
 }
 
+fn rate_setting_thread(addr: &str) {
+	let listener = TcpListener::bind(addr).unwrap();
+
+    // accept connections and process them serially
+    for stream in listener.incoming() {
+		let mut stream = stream.unwrap();
+		thread::spawn(move || {
+			let mut bytes = [0u8; 8];
+			stream.read_exact(&mut bytes).unwrap();
+			let rate = usize::from_be_bytes(bytes);
+			TARGET_RPS.store(rate, SeqCst);
+		});
+    }
+}
+
 #[derive(Parser, Debug)]
 struct Args {
 	#[arg(short, long)]
@@ -283,6 +260,9 @@ struct Args {
 
 	#[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
 	data_addrs: Vec<String>,
+
+	#[arg(short, long)]
+	rate_addr: String,
 }
 
 fn main() {
@@ -293,6 +273,13 @@ fn main() {
 		let mut p = PathBuf::from(&args.data_dir);
 		p.join(format!("2024-vldb-{}", cpu))
 	};
+
+	let rate_addr = args.rate_addr.clone();
+	thread::spawn(move || {
+		//set_core_affinity(cpu as usize);
+		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
+		rate_setting_thread(rate_addr.as_str());
+	});
 
 	let (freeing_tx, freeing_rx) = bounded(1024);
 	thread::spawn(move || {
@@ -322,24 +309,13 @@ fn main() {
 			assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
 			let key_low = 0;
 			let key_high = 4096;
-			do_work(db, read_ratio, key_low, key_high, cpu_id as u64, monitoring_tx, freeing_tx);
+			do_work(db, key_high, cpu_id as u64, monitoring_tx, freeing_tx);
 		}));
 
 	init_counter();
 
-	//thread::spawn(move || {
-	//	loop {
-	//		set_core_affinity(6);
-	//		thread::sleep(Duration::from_secs(5));
-	//		let e = Instant::now();
-	//		println!("Doing busy work");
-	//		let mut c = 0;
-	//		while e.elapsed().as_secs() < 2 {
-	//			c += 1;
-	//		}
-	//		println!("busy work sink: {}", c);
-	//	}
-	//});
+	thread::sleep(Duration::from_secs(15));
+	TARGET_RPS.store(500000, SeqCst);
 
 	for h in handles {
 		let _ = h.join();
