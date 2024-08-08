@@ -2,10 +2,13 @@ use serde::*;
 use std::collections::{HashSet, HashMap};
 use fxhash::FxHashMap;
 
-pub fn serialize<T: Serialize>(data: &T) -> Vec<u8> {
+pub fn to_binary<T: Serialize>(data: &T) -> Vec<u8> {
 	bincode::serialize(data).unwrap()
 }
 
+pub fn to_json<T: Serialize>(data: &T) -> String {
+	serde_json::to_string(data).unwrap()
+}
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
 pub enum Record {
@@ -26,6 +29,21 @@ impl std::ops::Deref for RecordBatch {
 	fn deref(&self) -> &Self::Target {
 		self.inner.as_slice()
 	}
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum Request {
+	DataReceived,
+	KvOps {
+		low_ts: u64,
+		high_ts: u64,
+	},
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum Response {
+	DataReceived(u64),
+	KvOpRecords(Vec<Record>),
 }
 
 

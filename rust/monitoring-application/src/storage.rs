@@ -10,7 +10,9 @@ pub trait Storage: Sync + Send + 'static {
 	//fn reader(&self) -> impl Reader;
 }
 
-pub trait Reader: Sync + Send + 'static { }
+pub trait Reader: Sync + Send + 'static + Clone {
+	fn handle_query(&self, query: &Request) -> Response;
+}
 
 #[derive(Clone)]
 pub struct Memstore {
@@ -33,13 +35,30 @@ impl Storage for Memstore {
 			guard.push((ts, *r));
 		}
 	}
-
-	//fn reader(&self) -> Self {
-	//	self.clone()
-	//}
 }
 
 impl Reader for Memstore {
+	fn handle_query(&self, query: &Request) -> Response {
+		match query {
+			Request::KvOps { low_ts, high_ts } => {
+				let mut result = Vec::new();
+				for item in self.data.lock().unwrap().iter().rev() {
+
+					if item.0 < *low_ts {
+						break;
+					}
+
+					if item.0 > *high_ts {
+						continue;
+					}
+
+					result.push(item.1);
+				}
+				Response::KvOpRecords(result)
+			},
+			_ => unreachable!(),
+		}
+	}
 }
 
 pub fn micros_since_epoch() -> u64 {
