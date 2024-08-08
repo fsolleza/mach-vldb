@@ -134,7 +134,7 @@ fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
 		let records = RecordBatch {
 			inner: records,
 		};
-		let data = serialize(&records);
+		let data = records.to_binary();
 		let sz = data.len();
 		for stream in streams.iter_mut() {
 			stream.write_all(&sz.to_be_bytes()).unwrap();

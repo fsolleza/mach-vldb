@@ -1,4 +1,4 @@
-use monitoring_application::{Record, RecordType, serialize, RecordBatch};
+use monitoring_application::{Record, RecordBatch};
 
 use lazy_static::*;
 use libbpf_rs::skel::OpenSkel;
@@ -75,17 +75,16 @@ fn sender(rx: Receiver<Record>, addrs: Vec<String>) {
 		records.push(record);
 		if records.len() == 1024 {
 			let r = RecordBatch {
-				record_type: RecordType::KVOp,
-				records: records,
+				inner: records,
 			};
-			let data = serialize(&r);
+			let data = r.to_binary();
 			let sz = data.len();
 			for stream in streams.iter_mut() {
 				stream.write_all(&sz.to_be_bytes()).unwrap();
 				stream.write_all(&data).unwrap();
 			}
 			COUNT.fetch_add(1024, SeqCst);
-			records = r.records;
+			records = r.inner;
 			records.clear();
 		}
 	}
@@ -119,14 +118,13 @@ struct Event {
 
 impl Event {
 	pub fn to_record(&self) -> Record {
-		let mut r = Record::default();
-		r.record_type = RecordType::Scheduler;
-		r.timestamp_micros = self.timestamp_micros;
-		r.prev_pid = self.prev_pid;
-		r.next_pid = self.next_pid;
-		r.comm = parse_comm(self.comm);
-		r.cpu = self.cpu;
-		r
+		Record::Scheduler {
+			timestamp_micros: self.timestamp_micros,
+			prev_pid: self.prev_pid,
+			next_pid: self.next_pid,
+			comm: parse_comm(self.comm),
+			cpu: self.cpu,
+		}
 	}
 }
 

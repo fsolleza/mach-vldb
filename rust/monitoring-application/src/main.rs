@@ -16,6 +16,10 @@ use std::{
 };
 use storage::*;
 
+static TOTAL_RECEIVED: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_DROPPED: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_WRITTEN: AtomicUsize = AtomicUsize::new(0);
+
 static RECEIVED: AtomicUsize = AtomicUsize::new(0);
 static WRITTEN: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -25,6 +29,11 @@ fn stat_counter() {
 		let r = RECEIVED.swap(0, SeqCst);
 		let d = DROPPED.swap(0, SeqCst);
 		let w = WRITTEN.swap(0, SeqCst);
+
+		TOTAL_RECEIVED.fetch_add(r, SeqCst);
+		TOTAL_DROPPED.fetch_add(d, SeqCst);
+		TOTAL_WRITTEN.fetch_add(w, SeqCst);
+
 		println!("received: {} written: {} dropped: {}", r, w, d);
 		std::thread::sleep(Duration::from_secs(1));
 	}
@@ -39,8 +48,7 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 			msg_bytes.clear();
 			msg_bytes.resize(sz as usize, 0u8);
 			stream.read_exact(&mut msg_bytes[..]).unwrap();
-			let records: RecordBatch =
-				bincode::deserialize(&msg_bytes[..]).unwrap();
+			let records = RecordBatch::from_binary(&msg_bytes[..]);
 			let l = records.len();
 			RECEIVED.fetch_add(l, SeqCst);
 			if chan.try_send(records).is_err() {
@@ -96,18 +104,18 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	msg_bytes.clear();
 	msg_bytes.resize(sz as usize, 0u8);
 	stream.read_exact(&mut msg_bytes[..]).unwrap();
-	let request: Request = bincode::deserialize(&msg_bytes[..]).unwrap();
+	let request: Request = Request::from_binary(&msg_bytes[..]);
 
 	/*
 	 * Handle the request
 	 */
 	let response = match request {
 		Request::DataReceived => {
-			Response::DataReceived(RECEIVED.load(SeqCst) as u64)
+			Response::DataReceived(TOTAL_RECEIVED.load(SeqCst) as u64)
 		}
 		Request::DataCompleteness => {
-			let received = RECEIVED.load(SeqCst) as f64;
-			let written = WRITTEN.load(SeqCst) as f64;
+			let received = TOTAL_RECEIVED.load(SeqCst) as f64;
+			let written = TOTAL_WRITTEN.load(SeqCst) as f64;
 			let completeness = written / received;
 			Response::DataCompleteness(completeness)
 		}
@@ -117,7 +125,7 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	/*
 	 * Write the response
 	 */
-	let response_bytes = bincode::serialize(&response).unwrap();
+	let response_bytes = response.to_binary();
 	stream
 		.write_all(&response_bytes.len().to_be_bytes())
 		.unwrap();
@@ -151,8 +159,8 @@ struct Args {
 	data_addr: String,
 
 	/// Receive queries using this address and port
-	//#[arg(short, long)]
-	//query_addr: String,
+	#[arg(short, long)]
+	query_addr: String,
 
 	/// mem, mach, or  influx
 	#[arg(short, long)]
@@ -168,7 +176,8 @@ fn main() {
 	match args.storage.as_str() {
 		"mem" => {
 			let memstorage = Memstore::new();
-			init_ingestion(&args.data_addr, memstorage);
+			init_ingestion(&args.data_addr, memstorage.clone());
+			init_query_handler(&args.query_addr, memstorage);
 		}
 		//"mach" => {
 		//	let memstorage = Memstore::new();

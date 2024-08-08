@@ -14,12 +14,18 @@ endif
 ###############
 
 ADDR_MEMSTORE_DATA  := 0.0.0.0:3501
-ADDR_MEMSTORE_QUERY := 0.0.0.0:3511
+ADDR_MEMSTORE_QUERY := 0.0.0.0:3502
 
-ADDR_MACH_DATA  := 0.0.0.0:3502
-ADDR_MACH_QUERY := 0.0.0.0:3512
+ADDR_MACH_DATA  := 0.0.0.0:3601
+ADDR_MACH_QUERY := 0.0.0.0:3602
 
-ADDRS_DATA          := 0.0.0.0:3501 0.0.0.0:3502
+#ADDRS_DATA := 0.0.0.0:3501 0.0.0.0:3601
+ADDRS_DATA := 0.0.0.0:3501
+
+ADDR_RATE_2 := 0.0.0.0:3702
+ADDR_RATE_4 := 0.0.0.0:3704
+ADDR_RATE_6 := 0.0.0.0:3706
+ADDR_RATE_8 := 0.0.0.0:3708
 
 CPUS_MEMSTORE         := 50-53
 CPUS_MACH             := 54-60
@@ -72,7 +78,6 @@ application: \
 	stop \
 	tmp-dir \
 	monitoring-application-memstore \
-	monitoring-application-mach \
 	kv-workload \
 	webapp
 
@@ -120,7 +125,8 @@ kv-workload: tmp-dir
 		--cpu 2 \
 		--data-dir $(PATH_WORKLOAD)2 \
 		--data-addrs $(ADDRS_DATA) \
-		,2)
+		--rate-addr $(ADDR_RATE_2) \
+	,2)
 
 
 .PHONY: scheduler-events

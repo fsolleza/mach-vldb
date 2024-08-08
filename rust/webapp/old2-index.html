@@ -1,0 +1,652 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<style>
+a.canvasjs-chart-credit {
+    visibility: hidden;
+}
+
+body {
+   font-family: Arial !important;
+   font-size: small;
+}
+
+.plotTitleOuter {
+	height: 150px;
+	width: 100px;
+}
+
+.plotTitleContainer {
+	height: 150px;
+	width: 100px;
+	display: table-cell;
+	vertical-align: middle;
+}
+
+.plotTitle {
+	display: inner-block;
+	float:right;
+	writing-mode: sideways-lr;
+	text-orientation: mixed;
+	font-weight: bold;
+	padding-right: 10px;
+	font-size: medium;
+}
+
+
+
+</style>
+</head>
+
+<body>
+
+<div style="margin: auto; display: grid; grid-template-columns: 200px 100px 1000px; column-gap: 100px,">
+    <div style="margin: 0">
+		<div>
+			<p><b>Target Storage</b></p>
+
+			<p>
+				<input type="radio" id="machRadio" name="storageRadio" value="Mach">
+        		<label for="ops">Mach</label>
+				</br>
+
+				<input type="radio" id="influxRadio" name="storageRadio" value="Influx">
+        		<label for="ops">InfluxDB</label>
+				</br>
+			</p>
+
+			<p><b>Target Field</b></p>
+
+			<p>
+				<input type="radio" id="ops" name="targetField" value="KvOp">
+        		<label for="ops">Ops</label>
+				</br>
+
+				<input type="radio" id="latency" name="targetField" value="DurationMicros">
+        		<label for="latency">Duration</label>
+				</br>
+
+				<input type="radio" id="latency" name="targetField" value="SchedulerEvent">
+        		<label for="latency">Scheduler Events</label>
+			</p>
+
+			<p><b>Available Aggregation Methods</b> <br></p>
+
+			<p>
+				<div name="aggDiv" id="aggCount" style="display: none">
+					<input type="radio" id="countRadio" name="aggRadio" value="Count">
+        			<label for="countRadio">Count</label>
+					</br>
+				</div>
+
+				<div name="aggDiv" id="aggAvg" style="display: none">
+					<input type="radio" id="avgRadio" name="aggRadio" value="Avg">
+        			<label for="avgRadio">Average</label>
+					</br>
+				</div>
+
+				<div name="aggDiv" id="aggMax" style="display: none">
+					<input type="radio" id="maxRadio" name="aggRadio" value="Max">
+        			<label for="maxRadio">Max</label>
+					</br>
+				</div>
+			</p>
+
+			<p><b>Available Group By Fields</b> <br></p>
+
+			<p>
+				<div name="groupByDiv" id="groupByCpu" style="display: none">
+					<input name="groupByBox" type="checkbox" id="cpuBox" value="Cpu" >CPU <br>
+				</div>
+
+				<div name="groupByDiv" id="groupByTid" style="display: none">
+					<input name="groupByBox" type="checkbox" id="tidBox" value="Tid">TID <br>
+				</div>
+
+				<div name="groupByDiv" id="groupByComm" style="display: none">
+					<input name="groupByBox" type="checkbox" id="commBox" value="Comm">Comm <br>
+				</div>
+
+			</p>
+
+			<p><b>Render in Plot #</b> <br></p>
+
+			<p>
+			<div>
+				<input type="radio" value="plot0" name="plotRadio"><label for="plot0">Plot 0</label>
+				<input type="radio" value="plot1" name="plotRadio"><label for="plot1">Plot 1</label>
+				<input type="radio" value="plot2" name="plotRadio"><label for="plot2">Plot 2</label>
+			</div>
+			<div>
+			</div>
+				<input type="radio" value="plot3" name="plotRadio"><label for="plot3">Plot 3</label>
+				<input type="radio" value="plot4" name="plotRadio"><label for="plot4">Plot 4</label>
+				<input type="radio" value="plot5" name="plotRadio"><label for="plot5">Plot 5</label>
+			<div>
+				<input type="radio" value="plot6" name="plotRadio"><label for="plot6">Plot 6</label>
+				<input type="radio" value="plot7" name="plotRadio"><label for="plot7">Plot 7</label>
+				<input type="radio" value="plot8" name="plotRadio"><label for="plot8">Plot 8</label>
+			</div>
+			<div>
+				<input type="radio" value="plot9" name="plotRadio"><label for="plot9">Plot 9</label>
+			</div>
+			</p>
+
+			<p>
+			<input type="button" onclick="addRequest()" value="Update Chart" id="doAppEvents">
+        	<input type="checkbox" id="pauseRequests"> Check to pause <br>
+			</p>
+
+		</div>
+    </div>
+    <div>
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="summaryTitle"> Summary Title </div>
+			</div>
+		</div>
+
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="plot0Title"> Plot 0 </div>
+			</div>
+		</div>
+
+		<div class="plotTitleOuter">
+			<div class="plotTitleContainer">
+				<div class="plotTitle" id="plot1Title"> Plot 1 </div>
+			</div>
+		</div>
+
+
+    </div>
+    <div>
+        <div id="summaryPlot" style="height: 150px;"></div>
+        <div name="plot" id="plot0"  style="height: 150px;"></div>
+        <div name="plot" id="plot1"  style="height: 150px;"></div>
+    </div>
+</div>
+
+<script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+<script>
+
+function isPaused() {
+    var pauseField = document.getElementById('pauseRequests');
+    return pauseField.checked;
+}
+
+setInterval(
+	function() {
+		var paused = isPaused();
+    	if (paused) {
+			console.log("paused");
+		} else {
+			console.log("not paused");
+			updateCharts();
+		}
+	},
+	1000
+);
+
+document.getElementsByName("targetField").forEach(choice => {
+	choice.onclick = () => {
+		if (choice.checked) {
+			setAggMethod(choice.value);
+			setGroupBy(choice.value);
+		}
+	}
+});
+
+function setAggMethod(value) {
+	document.getElementsByName("aggDiv").forEach(f => {
+		f.style.display = "none";
+	});
+
+	document.getElementsByName("aggRadio").forEach(f => {
+		f.checked = false;
+	});
+
+	if (value == "KvOp") {
+		document.getElementById("aggCount").style.display = "block";
+	}
+	else if (value == "DurationMicros") {
+		document.getElementById("aggAvg").style.display = "block";
+		document.getElementById("aggMax").style.display = "block";
+	}
+	else if (value == "SchedulerEvent") {
+		document.getElementById("aggCount").style.display = "block";
+	}
+}
+
+function setGroupBy(value) {
+
+	document.getElementsByName("groupByDiv").forEach(f => {
+		f.style.display = "none";
+	});
+
+	document.getElementsByName("groupByBox").forEach(f => {
+		f.checked = false;
+	});
+
+	if (value == "KvOp") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByTid").style.display = "block";
+	}
+	else if (value == "DurationMicros") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByTid").style.display = "block";
+	}
+	else if (value == "SchedulerEvent") {
+		document.getElementById("groupByCpu").style.display = "block";
+		document.getElementById("groupByComm").style.display = "block";
+	}
+}
+
+function updateCharts() {
+	var nowSecs = Math.floor(Date.now() / 1000);
+	var max = (nowSecs - 2) * 1000000;   // in micros
+	var min = max - 1000000;             // in micros
+
+	summaryPlotUpdate(min, max);
+	summaryPlot.render();
+
+	requestPlotsUpdate(min, max);
+}
+
+var summaryPlotData = [{
+	type: "line",
+	dataPoints: []
+}]
+
+var summaryPlot = new CanvasJS.Chart("summaryPlot", {
+    title: {
+        text: "",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+        verticalAlign: "center",
+        horizontalAlign: "left"
+    },
+
+	axisX: [{
+        interval: 10,
+        intervalType: "second",
+        labelWrap: false,
+        labelTextAlign: "right",
+        labelAngle: -20,
+        titleFontSize: 14,
+        labelFontSize: 14,
+        lineColor: "#ddd",
+	}],
+
+	axisY: {
+		labelFormatter: labelFormatter,
+	},
+
+    width: 800,
+	data: summaryPlotData
+})
+
+function summaryPlotUpdate(min_ts_micros, max_ts_micros) {
+	var req = {
+		"Data": {
+			"storage": "Mem",
+			"field": "DurationMicros",
+			"min_ts_micros": min_ts_micros,
+			"max_ts_micros": max_ts_micros,
+			"aggregation": "Count",
+			"grouping": [],
+		}
+	}
+
+    var request = JSON.stringify(req);
+    var request = new Request("http://localhost:3000/dataRequest", {
+        method: 'POST',
+        body: request,
+        headers: new Headers({
+            'Content-Type': 'application/json'
+        })
+    });
+    fetch(request)
+		.then(data => data.json())
+		.then(data => {
+			timestamp_secs = Math.floor(data.Data[0].data[0][0] / 1000000);
+			value = data.Data[0].data[0][1];
+			updateArray(summaryPlotData[0].dataPoints, timestamp_secs, value);
+		});
+};
+
+var PLOTS = []
+document.getElementsByName("plot").forEach(f => {
+	var request = {};
+	console.log("initng chart for", f.id);
+	var plotsData = [];
+	var plot = new CanvasJS.Chart(f.id, {
+		title: {
+		    text: "",
+		    fontFamily: "arial",
+		    fontSize: 12,
+		    fontWeight: "normal",
+		    backgroundColor: "#ffffff",
+		    verticalAlign: "top",
+		    horizontalAlign: "center"
+		},
+
+		legend: {
+			horizontalAlign: "center", // "center" , "right"
+       		verticalAlign: "bottom",  // "top" , "bottom"
+       		fontSize: 12,
+			itemclick: toggleDataSeries
+		},
+
+		axisX: [
+			{
+				interval: 10,
+        		intervalType: "second",
+        		labelWrap: false,
+        		labelTextAlign: "right",
+        		labelAngle: -45,
+        		titleFontSize: 14,
+        		labelFontSize: 14,
+        		lineColor: "#ddd",
+        		labelFormatter: function(){
+        		    return " ";
+        		}
+			}
+		],
+
+		axisY: {
+			labelFormatter: labelFormatter,
+		},
+
+		width: 800,
+		data: [],
+	})
+	plot.render();
+	title = document.getElementById(f.id + "Title");
+	PLOTS.push({ request: null, plot: plot, groups: [], title: title});
+});
+
+function resetPlot(plotId) {
+	console.log("Resetting plot",  plotId);
+}
+
+function addRequest() {
+
+	var storageOptions = document.getElementsByName("storageRadio");
+	var storage = "";
+	for (var i = 0; i < storageOptions.length; i++) {
+		var s = storageOptions[i];
+		if (s.checked) {
+			storage = s.value;
+			s.checked = false;
+			break;
+		}
+	}
+
+	var targets = document.getElementsByName("targetField");
+	var targetField = "";
+	for (var i = 0; i < targets.length; i++) {
+		var target = targets[i];
+		if (target.checked) {
+			targetField = target.value;
+			target.checked = false;
+			break;
+		}
+	}
+
+	var aggregations = document.getElementsByName("aggRadio");
+	var aggregationMethod = "";
+	for (var i = 0; i < aggregations.length; i++) {
+		var aggregation = aggregations[i];
+		if (aggregation.checked) {
+			aggregationMethod = aggregation.value;
+			aggregation.checked = false;
+			break;
+		}
+	}
+
+	var groups = document.getElementsByName("groupByBox");
+	var groupBy = [];
+	for (var i = 0; i < groups.length; i++) {
+		var group = groups[i];
+		if (group.checked) {
+			groupBy.push(group.value);
+			group.checked = false;
+		}
+	}
+
+	var plots = document.getElementsByName("plotRadio");
+	var plot = 0;
+	for (var i = 0; i < groups.length; i++) {
+		if (plots[i].checked) {
+			plot = i;
+			plots[i].checked = false;
+			break;
+		}
+	}
+
+	PLOTS[plot].request = {
+		"field": targetField,
+		"aggregation": aggregationMethod,
+		"grouping": groupBy,
+		"storage": storage,
+	};
+
+	PLOTS[plot].plot.options.data = [];
+	PLOTS[plot].groups = [];
+}
+
+function updatePlot(plotId, min_ts_micros, max_ts_micros) {
+	console.log("Updating plot data");
+
+	var request = PLOTS[plotId].request
+
+	if (request != null) {
+		var req = { Data: {} };
+		req.Data.storage = request.storage;
+		req.Data.field = request.field;
+		req.Data.aggregation = request.aggregation;
+		req.Data.grouping = request.grouping;
+		req.Data.min_ts_micros = min_ts_micros;
+		req.Data.max_ts_micros = max_ts_micros;
+
+		var request = JSON.stringify(req);
+		console.log(request);
+
+    	var request = new Request("http://localhost:3000/dataRequest", {
+    	    method: 'POST',
+    	    body: request,
+    	    headers: new Headers({
+    	        'Content-Type': 'application/json'
+    	    })
+    	});
+
+    	fetch(request)
+			.then(data => data.json())
+			.then(data => {
+				console.log(data);
+				renderPlot(plotId, data);
+			});
+	}
+}
+
+function renderPlot(plotId, newData) {
+	var plot = PLOTS[plotId].plot;
+	var groups = PLOTS[plotId].groups;
+	var req = PLOTS[plotId].request;
+	var title = PLOTS[plotId].title;
+	title.innerHTML = req.aggregation + "</br>" + req.field + "</br>" + req.storage;
+
+	console.log("Number of groups", newData.Data.length);
+	for (var i = 0; i < newData.Data.length; i++) {
+		console.log("Processing group", i);
+		var item = newData.Data[i];
+		var max_ts_micros = item.data[item.data.length - 1][0];
+		var max_ts_secs = max_ts_micros / 1000000;
+
+		// Setup a new empty data entry. If the group already exists, replace
+		// with the already existing data entry.
+		var group = item.group;
+		var legendText = generateLegend(group);
+		var data = {
+			type: "line",
+			dataPoints: [],
+			showInLegend: true,
+			name: legendText,
+			legendText: "{name}",
+		};
+
+		// Check to see if the group already exists in the plot. if it does, use
+		// the already existing data entry. Otherwise, push the new data entry
+		// into plot's data
+		var newGroup = true;
+		for (var g = 0; g < groups.length; g++) {
+			var currentGroup = groups[g];
+			var groupsEqual = deepEqual(group, currentGroup);
+
+			if (groupsEqual) {
+				data = plot.options.data[g];
+				newGroup = false;
+				break;
+			}
+		}
+
+		if (newGroup) {
+			groups.push(group);
+			console.log("new data", data);
+			for (var sec = 60; sec > 0; sec--) {
+				data.dataPoints.push({
+					x: secsToDt(max_ts_secs - sec),
+					y: NaN
+				});
+			}
+			plot.options.data.push(data);
+		}
+
+		// Push each new data point
+		for (var p = 0; p < item.data.length; p++) {
+			var point = item.data[p];
+			data.dataPoints.shift();
+			var x = secsToDt(point[0] / 1000000);
+			var y = point[1];
+			var l = generateLabel(x, y, group);
+			data.dataPoints.push({
+				x: x,
+				y: y,
+				label: l,
+			});
+		}
+	}
+	plot.render();
+}
+
+function generateLabel(x, y, group) {
+	var label = [];
+	group.forEach(g => {
+		if (g !== "None") {
+			label.push(g);
+		}
+	});
+	label.push({timestamp: x, value: y});
+    return JSON.stringify(label);
+}
+
+function generateLegend(group) {
+	var label = "";
+	group.forEach(g => {
+		if (g !== "None") {
+			console.log("Stringifying", g, JSON.stringify(g));
+			label += String(JSON.stringify(g));
+		}
+	});
+	console.log("Legend will be ", label);
+	return String(label);
+}
+
+function requestPlotsUpdate(min_ts_micros, max_ts_micros) {
+	for (var i = 0; i < PLOTS.length; i++) {
+		updatePlot(i, min_ts_micros, max_ts_micros);
+	}
+};
+
+function secsToDt(s) {
+	var t = new Date(1970, 0, 1); // Epoch
+    t.setSeconds(s);
+    return t;
+}
+
+function updateArray(array, timestamp_secs, value) {
+	if (array.length == 0) {
+		for (var i = 60; i > 0; i--) {
+			array.push({ x: secsToDt(timestamp_secs - i), y: NaN});
+		}
+	}
+
+	for (var i = 0; i < array.length - 1; i++) {
+		array[i] = array[i+1];
+	}
+	array[array.length - 1] = { x: secsToDt(timestamp_secs), y: value };
+}
+
+var deepEqual = function (x, y) {
+  if (x === y) {
+    return true;
+  }
+  else if ((typeof x == "object" && x != null) && (typeof y == "object" && y != null)) {
+    if (Object.keys(x).length != Object.keys(y).length)
+      return false;
+
+    for (var prop in x) {
+      if (y.hasOwnProperty(prop))
+      {
+        if (! deepEqual(x[prop], y[prop]))
+          return false;
+      }
+      else
+        return false;
+    }
+
+    return true;
+  }
+  else
+    return false;
+}
+
+function labelFormatter(e) {
+	
+	return CanvasJS.formatNumber(e.value, "#.00E+0");
+
+	//var s = "";
+
+	//if (e.value >= 1000000) {
+	//	s = String((e.value / 1000000).toFixed(3)) + " M";
+	//}
+	//else if (e.value >= 1000) {
+	//	s = String((e.value / 1000).toFixed(3)) + " K";
+	//}
+	//else {
+	//	s = String(e.value);
+	//}
+
+	//return s;
+}
+
+function toggleDataSeries(e){
+	if (typeof(e.dataSeries.visible) === "undefined" || e.dataSeries.visible) {
+		e.dataSeries.visible = false;
+	}
+	else{
+		e.dataSeries.visible = true;
+	}
+}
+
+
+summaryPlot.render();
+
+</script>
+
+</body>
+</html>
+
