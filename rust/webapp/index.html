@@ -68,10 +68,15 @@
 	  </div>
 	  <div class="bodyRow">
         <div id="leftColumn" class="columnDiv">
+		  <p>
+		    Mach
+		  </p>
           <p>
-            Mach Data Received:
+            Data Received:
 			<span class="boldSpan" id="machDataReceived">0</span>
+	      </p>
 
+	      <p>
 			Data Completeness:
 			<span class="boldSpan" id="machCompleteness">0</span>
           </p>
@@ -88,18 +93,47 @@
 	<script>
 	  var COUNTER = 0;
 
+	  /*
+	   * Update Mach completeness
+	   */
       setInterval(updateMachDataReceived, 1000);
-      setInterval(updateMachCompleteness, 1000);
-
 	  function updateMachDataReceived() {
 	    var elem = document.getElementById("machDataReceived");
-		COUNTER = COUNTER + 1;
-		elem.innerText = COUNTER;
 
         var req = {
 		  "Mem": "DataReceived"
 		}
 
+		var update_fn = function(data) {
+		  elem.innerText = data.DataReceived;
+		};
+
+        send_request(req, update_fn);
+      }
+
+      /*
+	   * Update Mach completeness
+	   */
+      setInterval(updateMachCompleteness, 1000);
+	  function updateMachCompleteness() {
+	    var elem = document.getElementById("machCompleteness");
+        var req = {
+		  "Mem": "DataCompleteness"
+		}
+
+		var update_fn = function(data) {
+		  console.log(data);
+		  elem.innerText = data.DataCompleteness * 100 + "%";
+		};
+
+        send_request(req, update_fn);
+	  }
+
+
+	  /*
+	   * Helper function to send request and call func when request completes
+	   */
+	  function send_request(req, func) {
         var request = JSON.stringify(req);
         var request = new Request("http://localhost:3000/dataRequest", {
             method: 'POST',
@@ -110,16 +144,8 @@
         });
 
         fetch(request)
-	      .then(data => data.json())
-	      .then(data => {
-		    console.log(data);
-	      });
-      }
-
-	  function updateMachCompleteness() {
-	    var elem = document.getElementById("machCompleteness");
-		COUNTER = COUNTER + 1;
-		elem.innerText = COUNTER;
+		  .then(data => data.json())
+	      .then(data => func(data));
 	  }
 
 	</script>
