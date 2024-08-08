@@ -1,6 +1,6 @@
-use serde::*;
-use std::collections::{HashSet, HashMap};
 use fxhash::FxHashMap;
+use serde::*;
+use std::collections::{HashMap, HashSet};
 
 pub fn to_binary<T: Serialize>(data: &T) -> Vec<u8> {
 	bincode::serialize(data).unwrap()
@@ -21,7 +21,7 @@ pub enum Record {
 
 #[derive(Serialize, Deserialize)]
 pub struct RecordBatch {
-	pub inner: Vec<Record>
+	pub inner: Vec<Record>,
 }
 
 impl std::ops::Deref for RecordBatch {
@@ -34,18 +34,16 @@ impl std::ops::Deref for RecordBatch {
 #[derive(Serialize, Deserialize)]
 pub enum Request {
 	DataReceived,
-	KvOps {
-		low_ts: u64,
-		high_ts: u64,
-	},
+	DataCompleteness,
+	KvOps { low_ts: u64, high_ts: u64 },
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum Response {
 	DataReceived(u64),
+	DataCompleteness(f64),
 	KvOpRecords(Vec<Record>),
 }
-
 
 //#[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy)]
 //pub enum StorageEngine {

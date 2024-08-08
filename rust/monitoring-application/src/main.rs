@@ -1,17 +1,20 @@
-mod storage;
 mod api;
+mod storage;
 
 use api::*;
-use storage::*;
+use clap::*;
+use crossbeam::channel::{bounded, Receiver, Sender};
 use std::{
-	net::{TcpListener, TcpStream},
-	thread,
 	io::{Read, Write},
-	sync::{Arc, atomic::{AtomicUsize, Ordering::SeqCst}},
+	net::{TcpListener, TcpStream},
+	sync::{
+		atomic::{AtomicUsize, Ordering::SeqCst},
+		Arc,
+	},
+	thread,
 	time::Duration,
 };
-use clap::*;
-use crossbeam::channel::{bounded, Sender, Receiver};
+use storage::*;
 
 static RECEIVED: AtomicUsize = AtomicUsize::new(0);
 static WRITTEN: AtomicUsize = AtomicUsize::new(0);
@@ -29,7 +32,7 @@ fn stat_counter() {
 
 fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 	let mut msg_size = [0u8; 8];
-	let mut msg_bytes: Vec<u8>= Vec::new();
+	let mut msg_bytes: Vec<u8> = Vec::new();
 	loop {
 		if stream.read_exact(&mut msg_size[..]).is_ok() {
 			let sz = u64::from_be_bytes(msg_size);
@@ -79,12 +82,11 @@ fn init_ingestion<S: Storage>(data_addr: &str, store: S) {
 			store.push_batch(&*batch);
 		}
 	});
-
 }
 
 fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	let mut msg_size = [0u8; 8];
-	let mut msg_bytes: Vec<u8>= Vec::new();
+	let mut msg_bytes: Vec<u8> = Vec::new();
 
 	/*
 	 * Read from the stream
@@ -94,8 +96,7 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	msg_bytes.clear();
 	msg_bytes.resize(sz as usize, 0u8);
 	stream.read_exact(&mut msg_bytes[..]).unwrap();
-	let request: Request =
-		bincode::deserialize(&msg_bytes[..]).unwrap();
+	let request: Request = bincode::deserialize(&msg_bytes[..]).unwrap();
 
 	/*
 	 * Handle the request
@@ -103,7 +104,13 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	let response = match request {
 		Request::DataReceived => {
 			Response::DataReceived(RECEIVED.load(SeqCst) as u64)
-		},
+		}
+		Request::DataCompleteness => {
+			let received = RECEIVED.load(SeqCst) as f64;
+			let written = WRITTEN.load(SeqCst) as f64;
+			let completeness = written / received;
+			Response::DataCompleteness(completeness)
+		}
 		Request::KvOps { .. } => reader.handle_query(&request),
 	};
 
@@ -111,12 +118,13 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	 * Write the response
 	 */
 	let response_bytes = bincode::serialize(&response).unwrap();
-	stream.write_all(&response_bytes.len().to_be_bytes()).unwrap();
+	stream
+		.write_all(&response_bytes.len().to_be_bytes())
+		.unwrap();
 	stream.write_all(&response_bytes).unwrap();
 }
 
 fn init_query_handler<R: Reader>(query_addr: &str, reader: R) {
-
 	let query_listener = TcpListener::bind(query_addr).unwrap();
 
 	/*
@@ -161,7 +169,7 @@ fn main() {
 		"mem" => {
 			let memstorage = Memstore::new();
 			init_ingestion(&args.data_addr, memstorage);
-		},
+		}
 		//"mach" => {
 		//	let memstorage = Memstore::new();
 		//	init_storage(&args.data_addr, &args.query_addr, memstorage);

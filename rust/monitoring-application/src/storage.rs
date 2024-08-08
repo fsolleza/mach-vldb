@@ -43,7 +43,6 @@ impl Reader for Memstore {
 			Request::KvOps { low_ts, high_ts } => {
 				let mut result = Vec::new();
 				for item in self.data.lock().unwrap().iter().rev() {
-
 					if item.0 < *low_ts {
 						break;
 					}
@@ -55,7 +54,7 @@ impl Reader for Memstore {
 					result.push(item.1);
 				}
 				Response::KvOpRecords(result)
-			},
+			}
 			_ => unreachable!(),
 		}
 	}
