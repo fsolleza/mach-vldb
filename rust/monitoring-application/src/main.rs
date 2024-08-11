@@ -1,7 +1,7 @@
-mod api;
 mod storage;
 
-use api::*;
+use api::kv_workload;
+use api::monitoring_application::*;
 use clap::*;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use std::{
@@ -92,7 +92,7 @@ fn init_ingestion<S: Storage>(data_addr: &str, store: S) {
 	});
 }
 
-fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
+fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
 	let mut msg_size = [0u8; 8];
 	let mut msg_bytes: Vec<u8> = Vec::new();
 
@@ -119,7 +119,7 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 			let completeness = written / received;
 			Response::DataCompleteness(completeness)
 		}
-		Request::KvOps { .. } => reader.handle_query(&request),
+		Request::KvOpsPercentile { .. } => reader.handle_query(&request),
 	};
 
 	/*
@@ -132,8 +132,9 @@ fn handle_query<R: Reader>(mut stream: TcpStream, reader: R) {
 	stream.write_all(&response_bytes).unwrap();
 }
 
-fn init_query_handler<R: Reader>(query_addr: &str, reader: R) {
-	let query_listener = TcpListener::bind(query_addr).unwrap();
+fn init_query_handler<R: Reader>(args: Args, reader: R) {
+
+	let query_listener = TcpListener::bind(&args.query_addr.clone()).unwrap();
 
 	/*
 	 * Setup an ingest thread to receive data over TCP keep track of
@@ -143,8 +144,9 @@ fn init_query_handler<R: Reader>(query_addr: &str, reader: R) {
 		for stream in query_listener.incoming() {
 			println!("Got a query connection");
 			let r = reader.clone();
+			let args = args.clone();
 			thread::spawn(move || {
-				handle_query(stream.unwrap(), r);
+				handle_query(args, stream.unwrap(), r);
 			});
 		}
 		println!("Exiting listener");
@@ -168,7 +170,7 @@ struct Args {
 }
 
 fn main() {
-	let args = Arc::new(Args::parse());
+	let args = Args::parse();
 	println!("Args: {:?}", args);
 
 	thread::spawn(stat_counter);
@@ -177,7 +179,8 @@ fn main() {
 		"mem" => {
 			let memstorage = Memstore::new();
 			init_ingestion(&args.data_addr, memstorage.clone());
-			init_query_handler(&args.query_addr, memstorage);
+			let args = args.clone();
+			init_query_handler(args, memstorage);
 		}
 		//"mach" => {
 		//	let memstorage = Memstore::new();

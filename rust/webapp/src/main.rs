@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use api::monitoring_application;
+use api::kv_workload;
 use axum::{
 	extract::{Json, State},
 	response::{Html, IntoResponse},
@@ -34,6 +36,10 @@ struct Args {
 
 	#[arg(short, long)]
 	addr_mach: String,
+
+	/// Send commands to RDB instances through these addresses and ports
+	#[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    workload_addrs: Vec<String>,
 }
 
 lazy_static! {
@@ -70,10 +76,11 @@ async fn index() -> Html<&'static str> {
 	Html(std::include_str!("../index.html"))
 }
 
-
 #[derive(Serialize, Deserialize, Debug)]
 enum WebRequest {
 	Mem(monitoring_application::Request),
+	SetQps { rate: u64 },
+	OpsPerSec,
 }
 
 impl WebRequest {
@@ -85,15 +92,61 @@ impl WebRequest {
 	}
 }
 
+#[derive(Serialize, Deserialize)]
+enum WebResponse {
+	SetQps,
+	OpsPerSec(u64),
+	DataReceived(u64),
+	DataCompleteness(f64),
+	KvOpsPercentile(Vec<api::monitoring_application::Record>),
+}
+
+impl Into<WebResponse> for api::monitoring_application::Response {
+	fn into(self) -> WebResponse  {
+		match self {
+			Self::DataReceived(x) => WebResponse::DataReceived(x),
+			Self::DataCompleteness(x) => WebResponse::DataCompleteness(x),
+			Self::KvOpsPercentile(x) => WebResponse::KvOpsPercentile(x),
+		}
+	}
+}
+
+impl Into<WebResponse> for api::kv_workload::Response {
+	fn into(self) -> WebResponse  {
+		match self {
+			Self::SetQps => WebResponse::SetQps,
+			Self::OpsPerSec(x) => WebResponse::OpsPerSec(x),
+		}
+	}
+}
+
 async fn request_handler(msg: Json<WebRequest>) -> impl IntoResponse {
 	let Json(web_req) = msg;
 
 	println!("Got request {:?}", web_req);
 
+	let resp = match web_req {
+		WebRequest::Mem(_) => {
+			handle_storage_request(web_req).await
+		}
+		WebRequest::SetQps{ rate }=> {
+			handle_set_qps_request(rate).await
+		}
+		WebRequest::OpsPerSec => {
+			handle_ops_per_sec_request().await
+		}
+	};
+
+	Json(resp)
+}
+
+async fn handle_storage_request(web_req: WebRequest) -> WebResponse {
 	let mut stream = match web_req {
 		WebRequest::Mem(_) => {
 			TcpStream::connect(&ARGS.addr_memstore).await.unwrap()
-		}
+		},
+		WebRequest::SetQps { .. } => unreachable!(),
+		WebRequest::OpsPerSec { .. } => unreachable!(),
 	};
 
 	let bytes = web_req.request().to_binary();
@@ -107,7 +160,61 @@ async fn request_handler(msg: Json<WebRequest>) -> impl IntoResponse {
 
 	let mut v = vec![0u8; sz as usize];
 	stream.read_exact(&mut v).await.unwrap();
-	let response = monitoring_application::Response::from_binary(&v[..]);
-
-	Json(response)
+	monitoring_application::Response::from_binary(&v[..]).into()
 }
+
+async fn handle_set_qps_request(qps: u64) -> WebResponse {
+	println!("Workload addrs {:?}", ARGS.workload_addrs);
+	let qps = qps / ARGS.workload_addrs.len() as u64;
+	for addr in ARGS.workload_addrs.iter() {
+		println!("Sending set qps request to addr {}", addr);
+
+		let req = kv_workload::Request::SetQps(qps);
+		let binary = req.to_binary();
+
+		let mut stream = TcpStream::connect(addr).await.unwrap();
+		stream.write_all(&binary.len().to_be_bytes()).await.unwrap();
+		stream.write_all(&binary).await.unwrap();
+
+		let sz = {
+			let mut sz_bytes = [0u8; 8];
+			stream.read_exact(&mut sz_bytes).await.unwrap();
+			usize::from_be_bytes(sz_bytes)
+		};
+
+		let mut vec = vec![0u8; sz];
+		stream.read_exact(&mut vec).await.unwrap();
+		let resp = kv_workload::Response::from_binary(&vec);
+		println!("set qps response: {:?}", resp);
+	}
+
+	WebResponse::SetQps
+}
+
+async fn handle_ops_per_sec_request() -> WebResponse {
+	let mut total = 0;
+	for addr in ARGS.workload_addrs.iter() {
+		let req = kv_workload::Request::OpsPerSec;
+		let binary = req.to_binary();
+
+		let mut stream = TcpStream::connect(addr).await.unwrap();
+		stream.write_all(&binary.len().to_be_bytes()).await.unwrap();
+		stream.write_all(&binary).await.unwrap();
+
+		let sz = {
+			let mut sz_bytes = [0u8; 8];
+			stream.read_exact(&mut sz_bytes).await.unwrap();
+			usize::from_be_bytes(sz_bytes)
+		};
+
+		let mut vec = vec![0u8; sz];
+		stream.read_exact(&mut vec).await.unwrap();
+		let resp = kv_workload::Response::from_binary(&vec);
+		match resp {
+			kv_workload::Response::OpsPerSec(x) => total += x,
+			_ => unreachable!(),
+		}
+	}
+	WebResponse::OpsPerSec(total)
+}
+

@@ -13,8 +13,7 @@ crossbeam = "0.8"
 lazy_static = "1"
 core_affinity = "0.8.1"
 serde = { version = "1", features = ["derive"] }
-
-monitoring-application = { path = "../monitoring-application" }
+api = { path = "../api" }
 
 [build-dependencies]
 libbpf-cargo = "0.21.1"

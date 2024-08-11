@@ -1,4 +1,4 @@
-use monitoring_application::{Record, RecordBatch};
+use api::monitoring_application::{Record, RecordBatch};
 
 use lazy_static::*;
 use libbpf_rs::skel::OpenSkel;

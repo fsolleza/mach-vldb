@@ -12,28 +12,10 @@ clap = { version = "4.3", default-features = false, features = ["std", "derive"]
 lazy_static = "1"
 thread-priority = "0.16.0"
 serde = { version="1", features=["derive"] }
+bincode = "1"
 
 dashmap = "5"
 core_affinity = "0.8.1"
 rocksdb = "0.22"
 
-monitoring-application = { path = "../monitoring-application" }
-
-# common = { path = "../common" }
-# influx-server = { path = "../influx-server" }
-
-#[lib]
-#name = "workload"
-#path = "src/lib.rs"
-
-#[[bin]]
-#name = "kv-workload"
-#path = "src/kv-workload.rs"
-
-#[[bin]]
-#name = "gather"
-#path = "src/gather.rs"
-
-#[[bin]]
-#name = "matmul-workload"
-#path = "src/matmul.rs"
+api = { path = "../api" }

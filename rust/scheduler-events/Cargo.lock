@@ -24,6 +24,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0952808a6c2afd1aa8947271f3a60f1a6763c7b912d210184c5149b5cf147247"
 
 [[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "fxhash",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -371,18 +381,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "monitoring-application"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "clap",
- "crossbeam",
- "fxhash",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "nix"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -534,6 +532,7 @@ checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 name = "scheduler-events"
 version = "0.1.0"
 dependencies = [
+ "api",
  "clap",
  "core_affinity",
  "crossbeam",
@@ -541,7 +540,6 @@ dependencies = [
  "libbpf-cargo",
  "libbpf-rs",
  "libc",
- "monitoring-application",
  "serde",
 ]
 

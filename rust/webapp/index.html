@@ -44,110 +44,288 @@
       margin: 0;
     }
 
-	.headerRow {
-	}
+  .headerRow {
+  }
 
     .bodyRow {
       display: grid;
-      grid-template-columns: 500px 500px;
+      grid-template-columns: 800px 800px;
       column-gap: 10px;
-	}
+  }
 
     span.boldSpan {
       font-weight: bold;
     }
 
-    </style>
-    <title>
-    </title>
+  .charts {
+    display: grid;
+    grid-template-rows: auto auto;
+    row-gap: 10px;
+  }
+
+    .chart {
+    height: 250px;
+    width: 800px;
+    margin: 0px auto;
+  }
+
+  </style>
+
+  <title>
+  </title>
+
   </head>
   <body>
     <div class="mainDiv">
-	  <div class="headerRow">
-	    <p> Header Row </p>
-	  </div>
-	  <div class="bodyRow">
+
+      <div class="headerRow">
+        <p>Queries Per Second</p>
+
+        <p>
+          <input type="range" min="1000" max="1000000" value="10000"
+            id="qpsToggle" oninput="qpsValue.value = qpsToggle.value - qpsToggle.value % 10000">
+          </br>
+          <output id="qpsValue">10000</output>
+        </p>
+
+        <p>
+          KV Ops per Second: <span class="boldSpan" id="kvOpsPerSec">0</span>
+        </p>
+      </div> <!-- headerRow -->
+
+      <div class="bodyRow">
+
         <div id="leftColumn" class="columnDiv">
-		  <p>
-		    Mach
-		  </p>
+          <p> Mach </p>
+
           <p>
             Data Received:
-			<span class="boldSpan" id="machDataReceived">0</span>
-	      </p>
-
-	      <p>
-			Data Completeness:
-			<span class="boldSpan" id="machCompleteness">0</span>
+            <span class="boldSpan" id="machDataReceived">0</span>
           </p>
-        </div>
+
+          <p>
+            Data Completeness:
+            <span class="boldSpan" id="machCompleteness">0</span>
+          </p>
+
+          <div class="charts">
+            <div id="machKvPercentile" class="chart">foo</div>
+            <div id="machSyscallLatency" class="chart">bar</div>
+          </div>
+
+        </div> <!-- leftColumn -->
+
         <div id="rightColumn" class="columnDiv">
           <p>
-            Right Column Data Received:
-			<span class="boldSpan" id="influxDataReceived">0</span>
+            InfluxDB Data Received:
+            <span class="boldSpan" id="influxDataReceived">0</span>
           </p>
-        </div>
-	  </div>
-    </div>
+        </div> <!-- rightColumn -->
 
-	<script>
-	  var COUNTER = 0;
+      </div> <!-- bodyRow -->
 
-	  /*
-	   * Update Mach completeness
-	   */
-      setInterval(updateMachDataReceived, 1000);
-	  function updateMachDataReceived() {
-	    var elem = document.getElementById("machDataReceived");
+    </div> <!-- mainDiv -->
 
-        var req = {
-		  "Mem": "DataReceived"
-		}
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+  <script>
+    /*
+     * Parameters
+     */
+    var TILE = 0.99
 
-		var update_fn = function(data) {
-		  elem.innerText = data.DataReceived;
-		};
+    /*
+     * Set queries per second in the RDB application
+     */
+    function updateQps() {
+      var qps = Number(document.getElementById("qpsToggle").value);
 
-        send_request(req, update_fn);
+      var req = {
+        "SetQps": {
+          "rate": qps
+        }
       }
 
-      /*
-	   * Update Mach completeness
-	   */
-      setInterval(updateMachCompleteness, 1000);
-	  function updateMachCompleteness() {
-	    var elem = document.getElementById("machCompleteness");
-        var req = {
-		  "Mem": "DataCompleteness"
-		}
+      var update_fn = function(data) {
+        console.log("Successfully set qps", data);
+      };
 
-		var update_fn = function(data) {
-		  console.log(data);
-		  elem.innerText = data.DataCompleteness * 100 + "%";
-		};
+      send_request(req, update_fn);
+    }
 
-        send_request(req, update_fn);
-	  }
+    /*
+     * Update measured query rate
+     */
+    function updateKvOpsPerSec() {
+      var elem = document.getElementById("kvOpsPerSec");
 
+      var req = "OpsPerSec";
 
-	  /*
-	   * Helper function to send request and call func when request completes
-	   */
-	  function send_request(req, func) {
-        var request = JSON.stringify(req);
-        var request = new Request("http://localhost:3000/dataRequest", {
-            method: 'POST',
-            body: request,
-            headers: new Headers({
-                'Content-Type': 'application/json'
-            })
-        });
+      var update_fn = function(data) {
+        elem.innerText = data.OpsPerSec;
+      };
 
-        fetch(request)
-		  .then(data => data.json())
-	      .then(data => func(data));
-	  }
+      send_request(req, update_fn);
+    }
 
-	</script>
+    /*
+     * Update Mach completeness
+     */
+    function updateMachDataReceived() {
+      var elem = document.getElementById("machDataReceived");
+
+      var req = { "Mem": "DataReceived" }
+
+      var update_fn = function(data) {
+        elem.innerText = data.DataReceived;
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Update Mach completeness
+     */
+    function updateMachCompleteness() {
+      var elem = document.getElementById("machCompleteness");
+      var req = { "Mem": "DataCompleteness" }
+
+      var update_fn = function(data) {
+        console.log(data);
+        elem.innerText = data.DataCompleteness * 100 + "%";
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Chart: Mach KvOp Latency
+     */
+    var machKvPercentileData = [{
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    }];
+
+    var machKvPercentileAxisX = {
+      interval: 10,
+      intervalType: "second",
+      labelWrap: false,
+      labelTextAlign: "right",
+      labelAngle: -20,
+      titleFontSize: 14,
+      labelFontSize: 14,
+      lineColor: "#ddd",
+    };
+
+    var machKvPercentileChart = new CanvasJS.Chart("machKvPercentile", {
+      title: {
+        text: "Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+      },
+
+      toolTip: { enabled: false, },
+
+      axisX: [machKvPercentileAxisX],
+
+      data: machKvPercentileData,
+    })
+
+    function updateMachKvOp99() {
+
+      var now = micros_now();
+
+      // set x axis range
+      var xMax = now / 1000000 - 1;
+      var xMin = xMax - 60;
+      machKvPercentileAxisX.minimum = secsToDt(xMin);
+      machKvPercentileAxisX.maximum = secsToDt(xMax);
+
+      // setup new array for rendering
+      var newPoints = [];
+      var oldPoints = machKvPercentileData[0].dataPoints;
+      for (var i = 0; i < oldPoints.length; i++) {
+        if (oldPoints[0].x > xMin) {
+          newPoints.push(oldPoints[0]);
+        }
+      }
+
+      // setup request for the previous second of data
+      var high = now - 1 * 1000000;
+      var low = high - 1 * 1000000;
+      var req = {
+        "Mem": {
+            "KvOpsPercentile": {
+              "low_ts": low, "high_ts": high, "tile": TILE
+            }
+        }
+      }
+
+      var update_fn = function(data) {
+        console.log(data["KvOpsPercentile"][0]);
+        var l = data.KvOpsPercentile.length;
+
+        for (var i = 0; i < l; i++) {
+          var item = data.KvOpsPercentile[i].KVOp;
+          var x = secsToDt(item.timestamp_micros / 1000000);
+          machKvPercentileData[0].dataPoints.push(
+            { x: x, y: item.duration_micros }
+          );
+        }
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Helper function to send request and call func when request completes
+     */
+    function send_request(req, func) {
+      var request = JSON.stringify(req);
+      var request = new Request("http://localhost:3000/dataRequest", {
+        method: 'POST',
+        body: request,
+        headers: new Headers({
+            'Content-Type': 'application/json'
+        })
+      });
+      fetch(request)
+        .then(data => data.json())
+        .then(data => func(data));
+    }
+
+    /*
+     * Helper functions to get microseconds now
+     */
+    function micros_now() {
+      var nowSecs = Math.floor(Date.now() / 1000);
+      return nowSecs * 1000000;
+    }
+
+    /*
+     * Helper to convert seconds since epoch to a Date object
+     */
+    function secsToDt(s) {
+      var t = new Date(1970, 0, 1); // Epoch
+      t.setSeconds(s);
+      return t;
+    }
+
+    /*
+     * Update data and charts every second
+     */
+    function updateData() {
+      updateQps();
+      updateKvOpsPerSec();
+      updateMachDataReceived();
+      updateMachCompleteness();
+      updateMachKvOp99();
+      machKvPercentileChart.render();
+    }
+    setInterval(updateData, 1000);
+
+  </script>
   </body>
 </html>

@@ -1,4 +1,5 @@
-//use common::{data::*, ipc::ipc_sender};
+use api::kv_workload;
+use api::monitoring_application::*;
 use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
 use lazy_static::*;
 use rand::prelude::*;
@@ -16,7 +17,6 @@ use std::{
 	io::prelude::*,
 };
 use thread_priority::*;
-use monitoring_application::*;
 use clap::*;
 
 type DB = Arc<DBWithThreadMode<SingleThreaded>>;
@@ -30,6 +30,8 @@ static READ_BYTES: AtomicUsize = AtomicUsize::new(0);
 static WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static WRITE_TIME_NS: AtomicUsize = AtomicUsize::new(0);
 static WRITE_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+static OPS_PER_SEC: AtomicUsize = AtomicUsize::new(0);
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
 static TARGET_RPS: AtomicUsize = AtomicUsize::new(10000);
@@ -48,6 +50,7 @@ fn counter2() {
 	let write_ops = WRITE_COUNT.swap(0, SeqCst);
 	let dropped = DROPPED.swap(0, SeqCst);
 	let ops = read_ops + write_ops;
+	OPS_PER_SEC.swap(ops, SeqCst);
 	println!(
 		"Reads: {} Writes: {} Generated: {}, Dropped: {}",
 		read_ops, write_ops, ops, dropped
@@ -185,12 +188,13 @@ fn do_work(
 
 		// Check rate and set new rate if changed
 		if (i > 0) && (i % 1024 == 0) {
-			let expected = rate_limiter * i;
-			while expected > start_time.elapsed(){}
+			let expected = rate_limiter * 1024;
+			while expected > start_time.elapsed() {}
 			rate_limiter = {
 				let r = 1. / (TARGET_RPS.load(SeqCst) as f64);
 				Duration::from_secs_f64(r)
 			};
+			start_time = Instant::now();
 		}
 
 		let key: u64 = rng.gen_range(0..max_key);
@@ -235,17 +239,39 @@ fn some_sink(rx: Receiver<Vec<u8>>) {
 	}
 }
 
-fn rate_setting_thread(addr: &str) {
+fn init_request_server(addr: &str) {
 	let listener = TcpListener::bind(addr).unwrap();
 
     // accept connections and process them serially
     for stream in listener.incoming() {
 		let mut stream = stream.unwrap();
 		thread::spawn(move || {
-			let mut bytes = [0u8; 8];
+
+			let mut size = [0u8; 8];
+			stream.read_exact(&mut size).unwrap();
+
+			let msg_size = usize::from_be_bytes(size);
+
+			let mut bytes = vec![0u8; msg_size];
 			stream.read_exact(&mut bytes).unwrap();
-			let rate = usize::from_be_bytes(bytes);
-			TARGET_RPS.store(rate, SeqCst);
+
+			let request = kv_workload::Request::from_binary(&bytes);
+
+			let response = match request {
+				kv_workload::Request::SetQps(rate) => {
+					TARGET_RPS.store(rate as usize, SeqCst);
+					kv_workload::Response::SetQps
+				},
+				kv_workload::Request::OpsPerSec => {
+					let ops_per_sec = OPS_PER_SEC.load(SeqCst);
+					kv_workload::Response::OpsPerSec(ops_per_sec as u64)
+				},
+			};
+
+			let bytes = response.to_binary();
+
+			stream.write_all(&bytes.len().to_be_bytes()).unwrap();
+			stream.write_all(&bytes).unwrap();
 		});
     }
 }
@@ -278,7 +304,7 @@ fn main() {
 	thread::spawn(move || {
 		//set_core_affinity(cpu as usize);
 		assert!(set_current_thread_priority(ThreadPriority::Min).is_ok());
-		rate_setting_thread(rate_addr.as_str());
+		init_request_server(rate_addr.as_str());
 	});
 
 	let (freeing_tx, freeing_rx) = bounded(1024);

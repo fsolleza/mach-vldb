@@ -22,10 +22,12 @@ ADDR_MACH_QUERY := 0.0.0.0:3602
 #ADDRS_DATA := 0.0.0.0:3501 0.0.0.0:3601
 ADDRS_DATA := 0.0.0.0:3501
 
-ADDR_RATE_2 := 0.0.0.0:3702
-ADDR_RATE_4 := 0.0.0.0:3704
-ADDR_RATE_6 := 0.0.0.0:3706
-ADDR_RATE_8 := 0.0.0.0:3708
+ADDR_KV_2 := 0.0.0.0:3702
+ADDR_KV_4 := 0.0.0.0:3704
+ADDR_KV_6 := 0.0.0.0:3706
+ADDR_KV_8 := 0.0.0.0:3708
+
+WORKLOAD_ADDRS := $(ADDR_KV_2)
 
 CPUS_MEMSTORE         := 50-53
 CPUS_MACH             := 54-60
@@ -88,6 +90,7 @@ webapp: tmp-dir
 		taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP) \
 		--addr-memstore $(ADDR_MEMSTORE_QUERY) \
 		--addr-mach $(ADDR_MACH_QUERY) \
+		--workload-addrs $(WORKLOAD_ADDRS) \
 	,)
 
 .PHONY: monitoring-application-memstore
@@ -125,7 +128,7 @@ kv-workload: tmp-dir
 		--cpu 2 \
 		--data-dir $(PATH_WORKLOAD)2 \
 		--data-addrs $(ADDRS_DATA) \
-		--rate-addr $(ADDR_RATE_2) \
+		--rate-addr $(ADDR_KV_2) \
 	,2)
 
 
