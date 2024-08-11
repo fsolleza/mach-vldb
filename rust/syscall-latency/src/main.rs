@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 use core::time::Duration;
 
+use std::net::TcpStream;
+use std::io::Write;
+use api::monitoring_application::{Record, RecordBatch};
 use anyhow::bail;
 use anyhow::Result;
 use clap::Parser;
@@ -48,6 +51,7 @@ pub enum EventBuffer {
 
 pub struct SyscallDuration {
 	syscall_number: u64,
+	timestamp: u64,
 	duration: u64,
 }
 
@@ -84,13 +88,28 @@ pub fn bump_memlock_rlimit() -> Result<()> {
 	Ok(())
 }
 
-fn sink(rx: Receiver<Vec<SyscallDuration>>) {
-	while let Ok(events) = rx.recv() {
-		COUNTER.fetch_add(events.len(), SeqCst);
+fn sink(addrs: Vec<String>, rx: Receiver<Vec<Record>>) {
+	println!("Connecting to {:?}", addrs);
+	let mut streams: Vec<TcpStream> = addrs
+		.into_iter()
+		.map(|x| TcpStream::connect(x).unwrap())
+		.collect();
+	println!("Connected!");
+	while let Ok(records) = rx.recv() {
+		COUNTER.fetch_add(records.len(), SeqCst);
+		let records = RecordBatch {
+			inner: records,
+		};
+		let data = records.to_binary();
+		let sz = data.len();
+		for stream in streams.iter_mut() {
+			stream.write_all(&sz.to_be_bytes()).unwrap();
+			stream.write_all(&data).unwrap();
+		}
 	}
 }
 
-fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<SyscallDuration>>) {
+fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 	let mut entry_events = HashMap::new();
 	let mut entry_event_key_count = HashMap::new();
 	let mut exit_event_key_count = HashMap::new();
@@ -124,10 +143,12 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<SyscallDuration>>) {
 					};
 
 					if let Some(start) = entry_events.remove(&key) {
-						let duration = event.timestamp - start;
-						let x = SyscallDuration {
+						let duration_micros = (event.timestamp - start) / 1000;
+						let timestamp_micros = start / 1000;
+						let x = Record::Syscall {
+							timestamp_micros,
+							duration_micros,
 							syscall_number: event.syscall_number,
-							duration,
 						};
 						durations.push(x);
 					}
@@ -144,7 +165,6 @@ fn exit_event_handler(_cpu: i32, bytes: &[u8]) {
 	let ptr = bytes_ptr as *const SyscallEventBuffer;
 	let event_buffer = unsafe { *ptr };
 }
-
 
 fn enter_event_handler(_cpu: i32, bytes: &[u8]) {
 	let bytes_ptr = bytes.as_ptr();
@@ -205,11 +225,9 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 			}
 		});
 	}
-
 	while !DONE.load(SeqCst) {
 		thread::sleep(Duration::from_secs(1));
 	}
-
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -217,6 +235,9 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 struct Args {
 	#[arg(short, long, num_args = 1.., value_delimiter = ' ')]
 	pids: Vec<u32>,
+
+	#[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+	data_addrs: Vec<String>,
 }
 
 fn main() {
@@ -225,8 +246,9 @@ fn main() {
 	thread::spawn(counter);
 
 	let (sink_tx, sink_rx) = unbounded();
+	let addrs = args.data_addrs.clone();
 	thread::spawn(move || {
-		sink(sink_rx);
+		sink(addrs, sink_rx);
 	});
 
 	let (combiner_tx, combiner_rx) = unbounded();

@@ -61,67 +61,6 @@ struct {
 	__uint(max_entries, 1);
 } syscall_exit_buffer_map SEC(".maps");
 
-//SEC("tp/raw_syscalls/sys_exit")
-//int handle_sys_exit(struct sys_exit_ctx *ctx) {
-//	struct task_struct* task = (struct task_struct*)bpf_get_current_task();
-//	uint32_t pid = 0;
-//	uint32_t tid = 0;
-//	bpf_probe_read(&pid, sizeof(pid), &task->tgid);
-//	bpf_probe_read(&tid, sizeof(pid), &task->pid);
-//	int zero = 0;
-//	if ((target_pid == 0) || (pid == target_pid)) {
-//		uint64_t time = bpf_ktime_get_ns();
-//		uint64_t * start = bpf_map_lookup_elem(&tid_start, &tid);
-//		if (!start) {
-//			bpf_printk("ERROR GETTING START TIME");
-//			return 0;
-//		}
-//		int syscall_number = ctx->syscall_number;
-//		struct syscall_event e = {0};
-//		e.pid = pid;
-//		e.tid = tid;
-//		e.duration = time - *start;
-//		e.syscall_number = syscall_number;
-//		e.start_time = *start;
-//
-//		struct syscall_event_buffer *buffer = bpf_map_lookup_elem(&syscall_buffers, &zero);
-//		if (!buffer) {
-//			bpf_printk("ERROR GETTING BUFFER");
-//			return 0;
-//		}
-//
-//		if (buffer->length < 256) {
-//			buffer->buffer[buffer->length] = e;
-//			buffer->length += 1;
-//		}
-//
-//		if (buffer->length == 256) {
-//			bpf_perf_event_output((void *)ctx, &perf_buffer, BPF_F_CURRENT_CPU, buffer, sizeof(*buffer));
-//			buffer->length = 0;
-//		}
-//
-//	}
-//	return 0;
-//}
-
-//SEC("tp/raw_syscalls/sys_enter")
-//int handle_sys_enter(struct sys_enter_ctx *ctx) {
-//	struct task_struct* task = (struct task_struct*)bpf_get_current_task();
-//	uint32_t pid = 0;
-//	uint32_t tid = 0;
-//	bpf_probe_read(&pid, sizeof(pid), &task->tgid);
-//	bpf_probe_read(&tid, sizeof(pid), &task->pid);
-//	int zero = 0;
-//	if ((target_pid == 0) || (pid == target_pid)) {
-//	//if ((pid == target_pid) && (ctx->syscall_number != 202)) {
-//		uint64_t time = bpf_ktime_get_ns();
-//		if (bpf_map_update_elem(&tid_start, &tid, &time, BPF_ANY) != 0) {
-//			bpf_printk("ERROR UPDATING START TIME");
-//		}
-//	}
-//	return 0;
-//}
-
 bool qualifies(uint32_t pid, int syscall_number) {
 	bool is_pid = false;
 	for (int i = 0; i < 4; ++i) {

@@ -233,7 +233,7 @@
       data: machKvPercentileData,
     })
 
-    function updateMachKvOp99() {
+    function updateMachKvOpChart() {
 
       var now = micros_now();
 
@@ -321,7 +321,8 @@
       updateKvOpsPerSec();
       updateMachDataReceived();
       updateMachCompleteness();
-      updateMachKvOp99();
+
+      updateMachKvOpChart();
       machKvPercentileChart.render();
     }
     setInterval(updateData, 1000);

@@ -10,6 +10,12 @@ pub enum Record {
 		duration_micros: u64,
 	},
 
+	Syscall {
+		syscall_number: u64,
+		timestamp_micros: u64,
+		duration_micros: u64,
+	},
+
 	Scheduler {
 		prev_pid: u64,
 		next_pid: u64,

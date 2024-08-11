@@ -12,6 +12,7 @@ lazy_static = "1.4.0"
 clap = { version = "4.0.32", default-features = false, features = ["std", "derive", "help", "usage"] }
 crossbeam = "0.8.2"
 serde = { version = "1.0", features = ["derive"] }
+api = { path = "../api" }
 
 [build-dependencies]
 libbpf-cargo = "0.21.2"
