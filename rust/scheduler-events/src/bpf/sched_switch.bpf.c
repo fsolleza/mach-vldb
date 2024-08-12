@@ -19,10 +19,15 @@ struct {
 
 const volatile uint32_t target_pids[4] = { 0, 0, 0, 0 };
 const volatile uint32_t target_cpus[4] = { 0, 0, 0, 0 };
+static uint64_t REFERENCE_TIME = 0;
 
 #define TASK_COMM_LEN 16
 
 static int handle_switch(void *ctx, struct task_struct *prev, struct task_struct *next) {
+	if (REFERENCE_TIME == 0) {
+		REFERENCE_TIME = bpf_ktime_get_ns();
+	}
+
     uint32_t prev_pid = BPF_CORE_READ(prev, tgid);
     uint64_t cpu = bpf_get_smp_processor_id();
     uint32_t next_pid = BPF_CORE_READ(next, tgid);
@@ -55,7 +60,7 @@ static int handle_switch(void *ctx, struct task_struct *prev, struct task_struct
     struct event e = {0};
     e.prev_pid = prev_pid;
     e.next_pid = next_pid;
-    e.timestamp = bpf_ktime_get_ns();
+    e.timestamp = (bpf_ktime_get_ns() - REFERENCE_TIME) / 1000;
     e.cpu = bpf_get_smp_processor_id();
 
     //bool in_cpu = e.cpu == 1 || e.cpu == 3 || e.cpu == 5;

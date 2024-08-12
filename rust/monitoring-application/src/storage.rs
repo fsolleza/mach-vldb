@@ -26,6 +26,27 @@ impl Memstore {
 		}
 	}
 
+	fn exec_scheduler(&self, low: u64, high: u64) -> Vec<Record> {
+		let mut events = Vec::new();
+		let guard = self.data.read().unwrap();
+		for item in guard.iter().rev() {
+			if item.0 < low {
+				break;
+			}
+			if item.0 > high {
+				continue;
+			}
+
+			match item.1 {
+				Record::Scheduler { .. } => {
+					events.push(item.1);
+				},
+				_ => {}
+			}
+		}
+		events
+	}
+
 	fn exec_read_syscalls(&self, low: u64, high: u64, tile: f64) -> Vec<Record> {
 		let mut durations = Vec::new();
 
@@ -118,7 +139,12 @@ impl Reader for Memstore {
 				let records = self.exec_read_syscalls(*low_ts, *high_ts, *tile);
 				Response::ReadSyscalls(records)
 			}
-			_ => unreachable!(),
+			Request::Scheduler { low_ts, high_ts } => {
+				let records = self.exec_scheduler(*low_ts, *high_ts);
+				Response::Scheduler(records)
+			}
+			Request::DataReceived => unreachable!(),
+			Request::DataCompleteness => unreachable!(),
 		}
 	}
 }

@@ -121,6 +121,7 @@ fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
 		}
 		Request::KvOpsPercentile { .. } => reader.handle_query(&request),
 		Request::ReadSyscalls { .. } => reader.handle_query(&request),
+		Request::Scheduler { .. } => reader.handle_query(&request),
 	};
 
 	/*

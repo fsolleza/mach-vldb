@@ -19,7 +19,7 @@ use std::{
 	net::TcpStream,
 	io::Write,
 	thread,
-	time::Duration,
+	time::{SystemTime, Duration},
 };
 use crossbeam::channel::{bounded, Receiver, Sender};
 
@@ -70,23 +70,15 @@ fn sender(rx: Receiver<Record>, addrs: Vec<String>) {
 		.collect();
 	println!("Connected!");
 
-	let mut records = Vec::new();
 	while let Ok(record) = rx.recv() {
-		records.push(record);
-		if records.len() == 1024 {
-			let r = RecordBatch {
-				inner: records,
-			};
-			let data = r.to_binary();
-			let sz = data.len();
-			for stream in streams.iter_mut() {
-				stream.write_all(&sz.to_be_bytes()).unwrap();
-				stream.write_all(&data).unwrap();
-			}
-			COUNT.fetch_add(1024, SeqCst);
-			records = r.inner;
-			records.clear();
+		let mut batch = RecordBatch { inner: vec![record] };
+		let data = batch.to_binary();
+		let sz = data.len();
+		for stream in streams.iter_mut() {
+			stream.write_all(&sz.to_be_bytes()).unwrap();
+			stream.write_all(&data).unwrap();
 		}
+		COUNT.fetch_add(1, SeqCst);
 	}
 }
 
@@ -174,8 +166,16 @@ fn attach(target_pids: Vec<String>, target_cpus: Vec<u32>) -> Result<(), libbpf_
 
 	let mut skel = open_skel.load()?;
 	skel.attach()?;
+	let sender = RECORD_CHAN.0.clone();
+	let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u64;
 	let perf = PerfBufferBuilder::new(skel.maps_mut().pb())
-		.sample_cb(handle_pb_event)
+		.sample_cb(move |_cpu: i32, bytes: &[u8]| {
+				let mut event = Event::default();
+				copy_from_bytes(&mut event, bytes);
+				event.timestamp_micros = event.timestamp_micros + now;
+				EVENTS.fetch_add(1, SeqCst);
+				sender.send(event.to_record()).unwrap();
+		})
 		.lost_cb(handle_lost_events)
 		.build()?;
 	loop {
@@ -185,8 +185,8 @@ fn attach(target_pids: Vec<String>, target_cpus: Vec<u32>) -> Result<(), libbpf_
 
 #[derive(Parser, Debug)]
 struct Args {
-	//#[arg(short, long)]
-	//data_addrs: Vec<String>,
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+	data_addrs: Vec<String>,
 
 	/// Pid scheduler events to monitor.
     #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
@@ -203,7 +203,7 @@ fn main() {
 	thread::spawn(init_counter);
 
 	let (_tx, rx) = RECORD_CHAN.clone();
-	//thread::spawn(move || sender(rx, args.data_addrs.clone()));
+	thread::spawn(move || sender(rx, args.data_addrs.clone()));
 	let pids = args.target_pids.clone();
 	let cpus = args.target_cpus.clone();
 	thread::spawn(move || attach(pids, cpus)).join().unwrap();

@@ -141,7 +141,8 @@ kv-workload: tmp-dir
 .PHONY: scheduler-events
 scheduler-events: tmp-dir do-sudo
 	sudo taskset --cpu-list $(CPUS_SCHEDULER_EVENTS) $(BIN_SCHEDULER_EVENTS) \
-		--target-pids $$(cat tmp/bg_pids | grep matrix | cut -d, -f2)
+		--target-pids $$(cat tmp/bg_pids | grep matrix | cut -d, -f2) \
+		--data-addrs $(ADDRS_DATA)
 
 .PHONY: syscall-latency
 syscall-latency: tmp-dir do-sudo
@@ -184,7 +185,7 @@ build-all: tmp-dir \
 	build-matrix-multiply \
 	build-scheduler-events \
 	build-syscall-latency
-	$(pprint) Building done
+	$(pprint) "building done"
 
 
 #############
