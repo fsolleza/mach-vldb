@@ -6,6 +6,7 @@
 //#include <linux/sched.h>
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
+static uint64_t REFERENCE_TIME = 0;
 const volatile uint32_t MY_PID = 0;
 const volatile uint32_t TARGET_PIDS[4] = { 0, 0, 0, 0 };
 
@@ -61,19 +62,12 @@ struct {
 	__uint(max_entries, 1);
 } syscall_exit_buffer_map SEC(".maps");
 
-bool qualifies(uint32_t pid, int syscall_number) {
-	bool is_pid = false;
-	for (int i = 0; i < 4; ++i) {
-		int target_pid = TARGET_PIDS[i];
-		if ((target_pid > 0) && (pid == target_pid)) {
-			return true;
-		}
-	}
-	return false;
-}
-
 SEC("tp/raw_syscalls/sys_exit")
 int handle_sys_exit(struct sys_exit_ctx *ctx) {
+	if (REFERENCE_TIME == 0) {
+		REFERENCE_TIME = bpf_ktime_get_ns();
+	}
+
     struct task_struct* task = (struct task_struct*)bpf_get_current_task();
     uint32_t pid = 0;
     uint32_t tid = 0;
@@ -81,12 +75,18 @@ int handle_sys_exit(struct sys_exit_ctx *ctx) {
     bpf_probe_read(&tid, sizeof(pid), &task->pid);
     int syscall_number = ctx->syscall_number;
 
-	if (!qualifies(pid, syscall_number)) {
+	if (syscall_number != 17) {
 		return 0;
 	}
 
+	if (pid == MY_PID) {
+		return 0;
+	}
+
+	bpf_printk("Got here");
+
     int zero = 0;
-    uint64_t time = bpf_ktime_get_ns();
+    uint64_t time = bpf_ktime_get_ns() - REFERENCE_TIME;
 
     struct syscall_event e = {0};
     e.pid = pid;
@@ -103,6 +103,8 @@ int handle_sys_exit(struct sys_exit_ctx *ctx) {
     if (buffer->length < 256) {
         buffer->buffer[buffer->length] = e;
         buffer->length += 1;
+		const char fmt_str[] = "Buffer length %d\n";
+		bpf_trace_printk(fmt_str, sizeof(fmt_str), buffer->length);
     }
 
     if (buffer->length == 256) {
@@ -115,6 +117,10 @@ int handle_sys_exit(struct sys_exit_ctx *ctx) {
 
 SEC("tp/raw_syscalls/sys_enter")
 int handle_sys_enter(struct sys_enter_ctx *ctx) {
+	if (REFERENCE_TIME == 0) {
+		REFERENCE_TIME = bpf_ktime_get_ns();
+	}
+
     struct task_struct* task = (struct task_struct*)bpf_get_current_task();
     uint32_t pid = 0;
     uint32_t tid = 0;
@@ -122,7 +128,11 @@ int handle_sys_enter(struct sys_enter_ctx *ctx) {
     bpf_probe_read(&tid, sizeof(pid), &task->pid);
     int syscall_number = ctx->syscall_number;
 
-	if (!qualifies(pid, syscall_number)) {
+	if (syscall_number != 17) {
+		return 0;
+	}
+
+	if (pid == MY_PID) {
 		return 0;
 	}
 
@@ -130,7 +140,7 @@ int handle_sys_enter(struct sys_enter_ctx *ctx) {
 	//bpf_trace_printk(fmt_str, sizeof(fmt_str), pid, syscall_number);
 
     int zero = 0;
-    uint64_t time = bpf_ktime_get_ns();
+    uint64_t time = bpf_ktime_get_ns() - REFERENCE_TIME;
 
     struct syscall_event e = {0};
     e.pid = pid;

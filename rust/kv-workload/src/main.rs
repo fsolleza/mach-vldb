@@ -183,6 +183,7 @@ fn do_work(
 		Duration::from_secs_f64(r)
 	};
 
+	let data_to_write = random_data(1024 * 4);
 	let mut start_time = Instant::now();
 	for i in 0..{
 
@@ -198,6 +199,14 @@ fn do_work(
 		}
 
 		let key: u64 = rng.gen_range(0..max_key);
+
+		{
+			let write_perc: f64 = rng.gen();
+			if write_perc > 0.90 {
+				let key: u64 = rng.gen_range(0..max_key);
+				do_write(&db, key, data_to_write.as_slice());
+			}
+		}
 
 		let now = Instant::now();
 		if let Some(vec) = do_read(&db, key) {
@@ -341,8 +350,6 @@ fn main() {
 	init_counter();
 
 	thread::sleep(Duration::from_secs(15));
-	TARGET_RPS.store(500000, SeqCst);
-
 	for h in handles {
 		let _ = h.join();
 	}

@@ -99,6 +99,7 @@ enum WebResponse {
 	DataReceived(u64),
 	DataCompleteness(f64),
 	KvOpsPercentile(Vec<api::monitoring_application::Record>),
+	ReadSyscalls(Vec<api::monitoring_application::Record>),
 }
 
 impl Into<WebResponse> for api::monitoring_application::Response {
@@ -107,6 +108,7 @@ impl Into<WebResponse> for api::monitoring_application::Response {
 			Self::DataReceived(x) => WebResponse::DataReceived(x),
 			Self::DataCompleteness(x) => WebResponse::DataCompleteness(x),
 			Self::KvOpsPercentile(x) => WebResponse::KvOpsPercentile(x),
+			Self::ReadSyscalls(x) => WebResponse::ReadSyscalls(x),
 		}
 	}
 }

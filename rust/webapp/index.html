@@ -109,8 +109,8 @@
           </p>
 
           <div class="charts">
-            <div id="machKvPercentile" class="chart">foo</div>
-            <div id="machSyscallLatency" class="chart">bar</div>
+            <div id="machKvPercentile" class="chart"></div>
+            <div id="machSyscallPercentile" class="chart">bar</div>
           </div>
 
         </div> <!-- leftColumn -->
@@ -136,8 +136,13 @@
     /*
      * Set queries per second in the RDB application
      */
+    var LAST_QPS = 0;
     function updateQps() {
       var qps = Number(document.getElementById("qpsToggle").value);
+      if (qps == LAST_QPS) {
+        return;
+      }
+      LAST_QPS = qps;
 
       var req = {
         "SetQps": {
@@ -247,10 +252,11 @@
       var newPoints = [];
       var oldPoints = machKvPercentileData[0].dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
-        if (oldPoints[0].x > xMin) {
-          newPoints.push(oldPoints[0]);
+        if (oldPoints[i].x > xMin) {
+          newPoints.push(oldPoints[i]);
         }
       }
+      machKvPercentileData[0].dataPoints = newPoints;
 
       // setup request for the previous second of data
       var high = now - 1 * 1000000;
@@ -274,10 +280,96 @@
             { x: x, y: item.duration_micros }
           );
         }
+        machKvPercentileChart.render();
       };
 
       send_request(req, update_fn);
     }
+
+    /*
+     * Read system calls graph
+     */
+
+    var machSyscallPercentileData = [{
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    }];
+
+    var machSyscallPercentileAxisX = {
+      interval: 10,
+      intervalType: "second",
+      labelWrap: false,
+      labelTextAlign: "right",
+      labelAngle: -20,
+      titleFontSize: 14,
+      labelFontSize: 14,
+      lineColor: "#ddd",
+    };
+
+    var machSyscallPercentileChart = new CanvasJS.Chart("machSyscallPercentile", {
+      title: {
+        text: "Read Syscall Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+      },
+
+      toolTip: { enabled: false, },
+
+      axisX: [machSyscallPercentileAxisX],
+
+      data: machSyscallPercentileData,
+    })
+
+    function updateReadSyscallsChart() {
+
+      var now = micros_now();
+
+      // set x axis range
+      var xMax = now / 1000000 - 1;
+      var xMin = xMax - 60;
+      machSyscallPercentileAxisX.minimum = secsToDt(xMin);
+      machSyscallPercentileAxisX.maximum = secsToDt(xMax);
+
+      // setup new array for rendering
+      var newPoints = [];
+      var oldPoints = machSyscallPercentileData[0].dataPoints;
+      for (var i = 0; i < oldPoints.length; i++) {
+        if (oldPoints[i].x > xMin) {
+          newPoints.push(oldPoints[i]);
+        }
+      }
+      machSyscallPercentileData[0].dataPoints = newPoints;
+
+      // setup request for the previous second of data
+      var high = now - 1 * 1000000;
+      var low = high - 1 * 1000000;
+      var req = {
+        "Mem": {
+            "ReadSyscalls": {
+              "low_ts": low, "high_ts": high, "tile": TILE,
+            }
+        }
+      }
+
+      var update_fn = function(data) {
+        //console.log(data["ReadSyscalls"]);
+        var l = data.ReadSyscalls.length;
+        for (var i = 0; i < l; i++) {
+          var item = data.ReadSyscalls[i].Syscall;
+          var x = secsToDt(item.timestamp_micros / 1000000);
+          machSyscallPercentileData[0].dataPoints.push(
+            { x: x, y: item.duration_micros }
+          );
+        }
+        machSyscallPercentileChart.render();
+      };
+
+      send_request(req, update_fn);
+    }
+
 
     /*
      * Helper function to send request and call func when request completes
@@ -316,14 +408,15 @@
     /*
      * Update data and charts every second
      */
+    machSyscallPercentileChart.render();
+    machKvPercentileChart.render();
     function updateData() {
+      updateReadSyscallsChart();
       updateQps();
       updateKvOpsPerSec();
       updateMachDataReceived();
       updateMachCompleteness();
-
       updateMachKvOpChart();
-      machKvPercentileChart.render();
     }
     setInterval(updateData, 1000);
 

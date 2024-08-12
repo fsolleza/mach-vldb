@@ -55,7 +55,7 @@ fn random_core_affinity<const T: usize>() -> usize {
 }
 
 const N: usize = 768; // 512mb matrix
-const CPU: usize = 6;
+const CPU: usize = 2;
 
 fn main() {
 	println!("HERE");
@@ -65,7 +65,7 @@ fn main() {
 	let mut print_a = true;
 	let mut total = 0.;
 	loop {
-		thread::sleep(Duration::from_secs(5));
+		thread::sleep(Duration::from_secs(10));
 		let e = Instant::now();
 		let mut c = 0;
 		while e.elapsed() < Duration::from_millis(100) {

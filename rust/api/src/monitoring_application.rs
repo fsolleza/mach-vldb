@@ -53,6 +53,7 @@ pub enum Request {
 	DataReceived,
 	DataCompleteness,
 	KvOpsPercentile { low_ts: u64, high_ts: u64, tile: f64 },
+	ReadSyscalls { low_ts: u64, high_ts: u64, tile: f64 },
 }
 
 impl Request {
@@ -70,6 +71,7 @@ pub enum Response {
 	DataReceived(u64),
 	DataCompleteness(f64),
 	KvOpsPercentile(Vec<Record>),
+	ReadSyscalls(Vec<Record>),
 }
 
 impl Response {

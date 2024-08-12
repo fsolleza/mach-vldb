@@ -120,6 +120,7 @@ fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
 			Response::DataCompleteness(completeness)
 		}
 		Request::KvOpsPercentile { .. } => reader.handle_query(&request),
+		Request::ReadSyscalls { .. } => reader.handle_query(&request),
 	};
 
 	/*

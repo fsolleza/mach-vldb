@@ -1,7 +1,7 @@
 use api::monitoring_application::*;
 use fxhash::FxHashMap;
 use std::{
-	sync::{Arc, Mutex},
+	sync::{Arc, RwLock},
 	time::SystemTime,
 };
 
@@ -16,20 +16,55 @@ pub trait Reader: Sync + Send + 'static + Clone {
 
 #[derive(Clone)]
 pub struct Memstore {
-	pub data: Arc<Mutex<Vec<(u64, Record)>>>,
+	pub data: Arc<RwLock<Vec<(u64, Record)>>>,
 }
 
 impl Memstore {
 	pub fn new() -> Self {
 		Self {
-			data: Arc::new(Mutex::new(Vec::new())),
+			data: Arc::new(RwLock::new(Vec::new())),
 		}
+	}
+
+	fn exec_read_syscalls(&self, low: u64, high: u64, tile: f64) -> Vec<Record> {
+		let mut durations = Vec::new();
+
+		let guard = self.data.read().unwrap();
+		for (idx, item) in guard.iter().enumerate().rev() {
+			match item.1 {
+				Record::Syscall { duration_micros, .. } => {
+					if item.0 < low {
+						break;
+					}
+
+					if item.0 > high {
+						continue;
+					}
+
+					durations.push((idx, duration_micros));
+				}
+				_ => {}
+			}
+		}
+		drop(guard);
+
+		durations.sort_by_key(|x| x.1);
+		let tile_idx = (durations.len() as f64 * tile) as usize;
+		let mut slow_queries: Vec<(usize, u64)> = durations[tile_idx..].into();
+		slow_queries.sort_by_key(|x| x.0);
+
+		let mut result = Vec::new();
+		let guard = self.data.read().unwrap();
+		for (idx, _) in slow_queries {
+			result.push(guard[idx].1);
+		}
+		result
 	}
 
 	fn exec_kvops_percentile(&self, low: u64, high: u64, tile: f64) -> Vec<Record> {
 		let mut durations = Vec::new();
 
-		let guard = self.data.lock().unwrap();
+		let guard = self.data.read().unwrap();
 		for (idx, item) in guard.iter().enumerate().rev() {
 			match item.1 {
 				Record::KVOp { duration_micros, .. } => {
@@ -54,7 +89,7 @@ impl Memstore {
 		slow_queries.sort_by_key(|x| x.0);
 
 		let mut result = Vec::new();
-		let guard = self.data.lock().unwrap();
+		let guard = self.data.read().unwrap();
 		for (idx, _) in slow_queries {
 			result.push(guard[idx].1);
 		}
@@ -65,7 +100,7 @@ impl Memstore {
 impl Storage for Memstore {
 	fn push_batch(&self, records: &[Record]) {
 		let ts = micros_since_epoch();
-		let mut guard = self.data.lock().unwrap();
+		let mut guard = self.data.write().unwrap();
 		for r in records {
 			guard.push((ts, *r));
 		}
@@ -78,6 +113,10 @@ impl Reader for Memstore {
 			Request::KvOpsPercentile { low_ts, high_ts, tile } => {
 				let records = self.exec_kvops_percentile(*low_ts, *high_ts, *tile);
 				Response::KvOpsPercentile(records)
+			}
+			Request::ReadSyscalls { low_ts, high_ts, tile } => {
+				let records = self.exec_read_syscalls(*low_ts, *high_ts, *tile);
+				Response::ReadSyscalls(records)
 			}
 			_ => unreachable!(),
 		}

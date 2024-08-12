@@ -156,13 +156,22 @@ fn handle_lost_events(cpu: i32, count: u64) {
 	eprintln!("Lost {count} events on CPU {cpu}");
 }
 
-fn attach(_target_pid: u32) -> Result<(), libbpf_rs::Error> {
-	use core_affinity::{set_for_current, CoreId};
-	assert!(set_for_current(CoreId { id: 61 }));
+fn attach(target_pids: Vec<String>, target_cpus: Vec<u32>) -> Result<(), libbpf_rs::Error> {
 	let skel_builder = SchedSwitchSkelBuilder::default();
 	let mut open_skel = skel_builder.open()?;
-	//open_skel.rodata().target_pid1 = target_pid;
-	open_skel.rodata().this_pid = std::process::id();
+
+	let npids = open_skel.rodata().target_pids.len().min(target_pids.len());
+	for i in 0..npids {
+		let pid: u32 = target_pids[i].parse().unwrap();
+		open_skel.rodata().target_pids[i] = pid;
+	}
+
+	//let ncpus = open_skel.rodata().target_cpus.len().min(target_cpus.len());
+	//for i in 0..ncpus {
+	//	let cpu: u32 = target_cpus[i];
+	//	open_skel.rodata().target_cpus[i] = cpu;
+	//}
+
 	let mut skel = open_skel.load()?;
 	skel.attach()?;
 	let perf = PerfBufferBuilder::new(skel.maps_mut().pb())
@@ -176,8 +185,16 @@ fn attach(_target_pid: u32) -> Result<(), libbpf_rs::Error> {
 
 #[derive(Parser, Debug)]
 struct Args {
-	#[arg(short, long)]
-	data_addrs: Vec<String>,
+	//#[arg(short, long)]
+	//data_addrs: Vec<String>,
+
+	/// Pid scheduler events to monitor.
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    target_pids: Vec<String>,
+
+	/// CPUs to monitor
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    target_cpus: Vec<u32>,
 }
 
 fn main() {
@@ -186,6 +203,8 @@ fn main() {
 	thread::spawn(init_counter);
 
 	let (_tx, rx) = RECORD_CHAN.clone();
-	thread::spawn(move || sender(rx, args.data_addrs.clone()));
-	thread::spawn(move || attach(0)).join().unwrap();
+	//thread::spawn(move || sender(rx, args.data_addrs.clone()));
+	let pids = args.target_pids.clone();
+	let cpus = args.target_cpus.clone();
+	thread::spawn(move || attach(pids, cpus)).join().unwrap();
 }

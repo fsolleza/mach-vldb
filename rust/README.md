@@ -13,12 +13,9 @@ make build-all
 # See Makefile for configuration and individual make commands
 make application
 
-# run interfering application (probably in a separate terminal)
-cd matrix-multiply
-cargo run --release
+# running syscall latency BPF (in a separate terminal)
+make syscall-latency
 
-# running syscall latency BPF
-cd syscall-latency
-cargo build --release
-./target/release/syscall-latency --pids [pids to monitor]
+# running scheduler events BPF (in a separate terminal)
+make scheduler-events
 '''

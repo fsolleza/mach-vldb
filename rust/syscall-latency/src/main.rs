@@ -18,6 +18,7 @@ use std::process;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst};
 use std::thread;
 use std::process::exit;
+use std::time::*;
 use serde::*;
 use std::collections::HashMap;
 
@@ -110,6 +111,9 @@ fn sink(addrs: Vec<String>, rx: Receiver<Vec<Record>>) {
 }
 
 fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
+
+	let now = SystemTime::now();
+
 	let mut entry_events = HashMap::new();
 	let mut entry_event_key_count = HashMap::new();
 	let mut exit_event_key_count = HashMap::new();
@@ -143,8 +147,11 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 					};
 
 					if let Some(start) = entry_events.remove(&key) {
+
 						let duration_micros = (event.timestamp - start) / 1000;
-						let timestamp_micros = start / 1000;
+						let start_time = now + Duration::from_micros(start / 1000);
+						let timestamp_micros = start_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u64;
+
 						let x = Record::Syscall {
 							timestamp_micros,
 							duration_micros,
@@ -191,6 +198,7 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 		let sender = combiner_tx.clone();
 		let perf = PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_enter())
 			.sample_cb(move |_cpu: i32, bytes: &[u8]| {
+				println!("Got start syscalls");
 				let bytes_ptr = bytes.as_ptr();
 				let ptr = bytes_ptr as *const SyscallEventBuffer;
 				let event_buffer = unsafe { *ptr };
@@ -211,6 +219,7 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 		let sender = combiner_tx.clone();
 		let perf = PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_exit())
 			.sample_cb(move |_cpu: i32, bytes: &[u8]| {
+				println!("Got end syscalls");
 				let bytes_ptr = bytes.as_ptr();
 				let ptr = bytes_ptr as *const SyscallEventBuffer;
 				let event_buffer = unsafe { *ptr };

@@ -34,12 +34,14 @@ CPUS_MACH             := 54-60
 CPUS_WEBAPP           := 10-15
 CPUS_KV_WORKLOAD      := 1-10
 CPUS_SCHEDULER_EVENTS := 21-25
+CPUS_SYSCALL_LATENCY  := 21-25
 
 BIN_WEBAPP           := ./webapp/target/release/webapp
 BIN_MONITORING_APP   := ./monitoring-application/target/release/monitoring-application
 BIN_KV_WORKLOAD      := ./kv-workload/target/release/kv-workload
 BIN_MATRIX_MULTIPLY  := ./matrix-multiply/target/release/matrix-multiply
 BIN_SCHEDULER_EVENTS := ./scheduler-events/target/release/scheduler-events
+BIN_SYSCALL_LATENCY  := ./syscall-latency/target/release/syscall-latency
 
 PATH_BG_PIDS  := tmp/bg_pids
 PATH_WORKLOAD := /nvme/data/tmp/vldb/workload
@@ -71,6 +73,10 @@ define rust_build
 	stty sane
 endef
 
+.PHONY: sane-terminal
+sane-terminal:
+	stty sane
+
 #################
 ## RUN TARGETS ##
 #################
@@ -81,7 +87,9 @@ application: \
 	tmp-dir \
 	monitoring-application-memstore \
 	kv-workload \
-	webapp
+	webapp \
+	matrix-multiply \
+	sane-terminal
 
 .PHONY: webapp
 webapp: tmp-dir
@@ -115,11 +123,10 @@ monitoring-application-mach: tmp-dir
 		--query-addr $(ADDR_MACH_QUERY) \
 	,)
 
-
 .PHONY: matrix-multiply
 matrix-multiply: tmp-dir do-sudo
 	$(pprint) "Running monitoring application with memstore"
-	$(call bg, sudo $(BIN_MATRIX_MULTIPLY),)
+	$(call bg, $(BIN_MATRIX_MULTIPLY),)
 
 .PHONY: kv-workload
 kv-workload: tmp-dir
@@ -131,14 +138,15 @@ kv-workload: tmp-dir
 		--rate-addr $(ADDR_KV_2) \
 	,2)
 
-
 .PHONY: scheduler-events
 scheduler-events: tmp-dir do-sudo
-	$(call bg, \
-		sudo taskset --cpu-list $(CPUS_SCHEDULER_EVENTS) \
-		$(BIN_SCHEDULER_EVENTS) \
-		--data-addrs $(ADDRS_DATA) \
-		,)
+	sudo taskset --cpu-list $(CPUS_SCHEDULER_EVENTS) $(BIN_SCHEDULER_EVENTS) \
+		--target-pids $$(cat tmp/bg_pids | grep matrix | cut -d, -f2)
+
+.PHONY: syscall-latency
+syscall-latency: tmp-dir do-sudo
+	sudo taskset --cpu-list $(CPUS_SYSCALL_LATENCY) $(BIN_SYSCALL_LATENCY) \
+		--data-addrs $(ADDRS_DATA)
 
 ###################
 ## BUILD TARGETS ##
@@ -164,13 +172,18 @@ build-matrix-multiply:
 build-scheduler-events:
 	$(call rust_build,scheduler-events,,)
 
+.PHONY: build-syscall-latency
+build-syscall-latency:
+	$(call rust_build,syscall-latency,,)
+
 .PHONY: build-all
 build-all: tmp-dir \
 	build-webapp \
 	build-monitoring-application \
 	build-kv-workload \
 	build-matrix-multiply \
-	build-scheduler-events
+	build-scheduler-events \
+	build-syscall-latency
 	$(pprint) Building done
 
 
