@@ -60,7 +60,7 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 	}
 }
 
-fn init_ingestion<S: Storage>(data_addr: &str, store: S) {
+fn init_ingestion<S: Storage>(data_addr: &str, mut store: S) {
 	let (data_tx, data_rx) = bounded::<RecordBatch>(1024);
 	println!("Setting up listener for data at {:?}", data_addr);
 	let data_listener = TcpListener::bind(data_addr).unwrap();
@@ -135,7 +135,6 @@ fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
 }
 
 fn init_query_handler<R: Reader>(args: Args, reader: R) {
-
 	let query_listener = TcpListener::bind(&args.query_addr.clone()).unwrap();
 
 	/*
