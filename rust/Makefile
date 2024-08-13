@@ -20,7 +20,7 @@ ADDR_MACH_DATA  := 0.0.0.0:3601
 ADDR_MACH_QUERY := 0.0.0.0:3602
 
 #ADDRS_DATA := 0.0.0.0:3501 0.0.0.0:3601
-ADDRS_DATA := 0.0.0.0:3501
+ADDRS_DATA := 0.0.0.0:3601
 
 ADDR_KV_2 := 0.0.0.0:3702
 ADDR_KV_4 := 0.0.0.0:3704
@@ -85,7 +85,7 @@ sane-terminal:
 application: \
 	stop \
 	tmp-dir \
-	monitoring-application-memstore \
+	monitoring-application-mach \
 	kv-workload \
 	webapp \
 	matrix-multiply \

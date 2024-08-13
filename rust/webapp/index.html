@@ -181,7 +181,7 @@
     function updateMachDataReceived() {
       var elem = document.getElementById("machDataReceived");
 
-      var req = { "Mem": "DataReceived" }
+      var req = { "Mach": "DataReceived" }
 
       var update_fn = function(data) {
         elem.innerText = data.DataReceived;
@@ -195,7 +195,7 @@
      */
     function updateMachCompleteness() {
       var elem = document.getElementById("machCompleteness");
-      var req = { "Mem": "DataCompleteness" }
+      var req = { "Mach": "DataCompleteness" }
 
       var update_fn = function(data) {
         //console.log(data);
@@ -275,7 +275,7 @@
       var high = now - 1 * 1000000;
       var low = high - 1 * 1000000;
       var req = {
-        "Mem": {
+        "Mach": {
             "KvOpsPercentile": {
               "low_ts": low, "high_ts": high, "tile": TILE
             }
@@ -361,7 +361,7 @@
       var high = now - 1 * 1000000;
       var low = high - 1 * 1000000;
       var req = {
-        "Mem": {
+        "Mach": {
             "ReadSyscalls": {
               "low_ts": low, "high_ts": high, "tile": TILE,
             }
@@ -446,7 +446,7 @@
       var high = now - 1 * 1000000;
       var low = high - 1 * 1000000;
       var req = {
-        "Mem": {
+        "Mach": {
             "Scheduler": {
               "low_ts": low, "high_ts": high
             }

@@ -79,6 +79,7 @@ async fn index() -> Html<&'static str> {
 #[derive(Serialize, Deserialize, Debug)]
 enum WebRequest {
 	Mem(monitoring_application::Request),
+	Mach(monitoring_application::Request),
 	SetQps { rate: u64 },
 	OpsPerSec,
 }
@@ -87,7 +88,9 @@ impl WebRequest {
 	fn request(&self) -> &monitoring_application::Request {
 		match self {
 			Self::Mem(x) => &x,
-			_ => unimplemented!(),
+			Self::Mach(x) => &x,
+			Self::SetQps { .. } => unimplemented!(),
+			Self::OpsPerSec => unimplemented!(),
 		}
 	}
 }
@@ -133,6 +136,9 @@ async fn request_handler(msg: Json<WebRequest>) -> impl IntoResponse {
 		WebRequest::Mem(_) => {
 			handle_storage_request(web_req).await
 		}
+		WebRequest::Mach(_) => {
+			handle_storage_request(web_req).await
+		}
 		WebRequest::SetQps{ rate }=> {
 			handle_set_qps_request(rate).await
 		}
@@ -149,6 +155,9 @@ async fn handle_storage_request(web_req: WebRequest) -> WebResponse {
 		WebRequest::Mem(_) => {
 			TcpStream::connect(&ARGS.addr_memstore).await.unwrap()
 		},
+		WebRequest::Mach(_) => {
+			TcpStream::connect(&ARGS.addr_mach).await.unwrap()
+		}
 		WebRequest::SetQps { .. } => unreachable!(),
 		WebRequest::OpsPerSec { .. } => unreachable!(),
 	};

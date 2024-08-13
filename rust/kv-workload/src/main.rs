@@ -130,7 +130,17 @@ fn sender(rx: Receiver<Vec<Record>>, addrs: Vec<String>) {
 	println!("Connecting to {:?}", addrs);
 	let mut streams: Vec<TcpStream> = addrs
 		.into_iter()
-		.map(|x| TcpStream::connect(x).unwrap())
+		.map(|x| {
+			loop {
+				let x: String = x.clone();
+				println!("Attempting to connect to {:?}", &x);
+				if let Ok(s) = TcpStream::connect(x) {
+					return s;
+				}
+				thread::sleep(Duration::from_secs(1));
+			}
+			TcpStream::connect(x).unwrap()
+		})
 		.collect();
 	println!("Connected!");
 	while let Ok(records) = rx.recv() {

@@ -183,11 +183,14 @@ fn main() {
 			let args = args.clone();
 			init_query_handler(args, memstorage);
 		}
-		//"mach" => {
-		//	let memstorage = Memstore::new();
-		//	init_storage(&args.data_addr, &args.query_addr, memstorage);
-		//},
-		_ => panic!("unhandled storage argument"),
+		"mach" => {
+			let mach = MachStore::new("/nvme/data/tmp/vldb/mach");
+			let reader = mach.reader();
+			init_ingestion(&args.data_addr, mach);
+			let args = args.clone();
+			init_query_handler(args, reader);
+		},
+		_ => panic!("unhandled storage argument {}", args.storage),
 	}
 
 	loop {
