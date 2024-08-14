@@ -9,6 +9,8 @@ git submodule update --init --recursive
 # build all components
 make build-all
 
+# if Influx
+
 # runs the application.
 # See Makefile for configuration and individual make commands
 make application

@@ -15,7 +15,7 @@
 
 setopt verbose
 
-INFLUX_DATADIR=/nvme/data/tmp/influx
+INFLUX_DATADIR=/nvme/data/tmp/vldb/influx
 INFLUX_HTTPHOST=http://127.0.0.1:8080
 
 rm -rf $INFLUX_DATADIR
