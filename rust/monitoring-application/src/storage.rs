@@ -83,6 +83,9 @@ impl MachStore {
 impl Storage for MachStore {
 	fn push_batch(&mut self, records: &[Record]) {
 		let ts = micros_since_epoch();
+		let mut sync_kvop = false;
+		let mut sync_sched = false;
+		let mut sync_syscall = false;
 		for r in records {
 			match *r {
 				Record::KVOp {
@@ -91,6 +94,7 @@ impl Storage for MachStore {
 					duration_micros,
 				} => {
 					self.push_kvop(ts, cpu, timestamp_micros, duration_micros);
+					sync_kvop = true;
 				}
 				Record::Syscall {
 					syscall_number,
@@ -103,6 +107,7 @@ impl Storage for MachStore {
 						timestamp_micros,
 						duration_micros,
 					);
+					sync_syscall = true;
 				}
 				Record::Scheduler {
 					prev_pid,
@@ -119,8 +124,19 @@ impl Storage for MachStore {
 						timestamp_micros,
 						comm,
 					);
+					sync_sched = true;
 				}
 			}
+		}
+
+		if sync_kvop {
+			self.inner.sync(0, 0);
+		}
+		if sync_syscall {
+			self.inner.sync(1, 1);
+		}
+		if sync_sched {
+			self.inner.sync(2, 1);
 		}
 	}
 }
@@ -134,7 +150,13 @@ impl MachReader {
 	fn exec_scheduler(&self, low: u64, high: u64) -> Vec<Record> {
 		let mut events = Vec::new();
 
-		let snapshot = self.inner.snapshot(&[(0, 0)]);
+		let snapshot = match self.inner.snapshot(&[(2, 1)]) {
+			Some(x) => x,
+			None => {
+				println!("No snapshot made");
+				return Vec::new();
+			},
+		};
 		let mut iterator = snapshot.iterator();
 
 		while let Some(entry) = iterator.next_entry() {
@@ -169,7 +191,11 @@ impl MachReader {
 
 		let mut raw_data: Vec<(u64, u64, u64)> = Vec::new();
 
-		let snapshot = self.inner.snapshot(&[(1, 1)]);
+		let snapshot = match self.inner.snapshot(&[(1, 1)]) {
+			Some(x) => x,
+			None => { return Vec::new() },
+		};
+
 		let mut iterator = snapshot.iterator();
 
 		while let Some(entry) = iterator.next_entry() {
@@ -212,7 +238,10 @@ impl MachReader {
 	) -> Vec<Record> {
 		let mut raw_data: Vec<(u64, u64, u64)> = Vec::new();
 
-		let snapshot = self.inner.snapshot(&[(1, 1)]);
+		let snapshot = match self.inner.snapshot(&[(0, 0)]) {
+			Some(x) => x,
+			None => { return Vec::new() },
+		};
 		let mut iterator = snapshot.iterator();
 
 		while let Some(entry) = iterator.next_entry() {
