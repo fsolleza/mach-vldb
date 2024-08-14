@@ -37,6 +37,9 @@ struct Args {
 	#[arg(short, long)]
 	addr_mach: String,
 
+	#[arg(short, long)]
+	addr_influx: String,
+
 	/// Send commands to RDB instances through these addresses and ports
 	#[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     workload_addrs: Vec<String>,
@@ -85,6 +88,7 @@ async fn charts() -> Html<&'static str> {
 enum WebRequest {
 	Mem(monitoring_application::Request),
 	Mach(monitoring_application::Request),
+	Influx(monitoring_application::Request),
 	SetQps { rate: u64 },
 	OpsPerSec,
 }
@@ -94,6 +98,7 @@ impl WebRequest {
 		match self {
 			Self::Mem(x) => &x,
 			Self::Mach(x) => &x,
+			Self::Influx(x) => &x,
 			Self::SetQps { .. } => unimplemented!(),
 			Self::OpsPerSec => unimplemented!(),
 		}
@@ -144,6 +149,9 @@ async fn request_handler(msg: Json<WebRequest>) -> impl IntoResponse {
 		WebRequest::Mach(_) => {
 			handle_storage_request(web_req).await
 		}
+		WebRequest::Influx(_) => {
+			handle_storage_request(web_req).await
+		}
 		WebRequest::SetQps{ rate }=> {
 			handle_set_qps_request(rate).await
 		}
@@ -162,6 +170,9 @@ async fn handle_storage_request(web_req: WebRequest) -> WebResponse {
 		},
 		WebRequest::Mach(_) => {
 			TcpStream::connect(&ARGS.addr_mach).await.unwrap()
+		}
+		WebRequest::Influx(_) => {
+			TcpStream::connect(&ARGS.addr_influx).await.unwrap()
 		}
 		WebRequest::SetQps { .. } => unreachable!(),
 		WebRequest::OpsPerSec { .. } => unreachable!(),

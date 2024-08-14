@@ -19,7 +19,10 @@ ADDR_MEMSTORE_QUERY := 0.0.0.0:3502
 ADDR_MACH_DATA  := 0.0.0.0:3601
 ADDR_MACH_QUERY := 0.0.0.0:3602
 
-ADDRS_DATA := $(ADDR_MACH_DATA)
+ADDR_INFLUX_DATA  := 0.0.0.0:3401
+ADDR_INFLUX_QUERY := 0.0.0.0:3402
+
+ADDRS_DATA := $(ADDR_INFLUX_DATA)
 
 ADDR_KV_2 := 0.0.0.0:3702
 ADDR_KV_4 := 0.0.0.0:3704
@@ -29,7 +32,8 @@ ADDR_KV_8 := 0.0.0.0:3708
 WORKLOAD_ADDRS := $(ADDR_KV_2)
 
 CPUS_MEMSTORE         := 50-53
-CPUS_MACH             := 54-60
+CPUS_MACH             := 54-55
+CPUS_INFLUX           := 55-60
 CPUS_WEBAPP           := 10-15
 CPUS_KV_WORKLOAD      := 1-10
 CPUS_SCHEDULER_EVENTS := 21-25
@@ -84,7 +88,7 @@ sane-terminal:
 application: \
 	stop \
 	tmp-dir \
-	monitoring-application-mach \
+	monitoring-application-influx \
 	kv-workload \
 	webapp \
 	matrix-multiply \
@@ -97,7 +101,19 @@ webapp: tmp-dir
 		taskset --cpu-list $(CPUS_WEBAPP) $(BIN_WEBAPP) \
 		--addr-memstore $(ADDR_MEMSTORE_QUERY) \
 		--addr-mach $(ADDR_MACH_QUERY) \
+		--addr-influx $(ADDR_INFLUX_QUERY) \
 		--workload-addrs $(WORKLOAD_ADDRS) \
+	,)
+
+.PHONY: monitoring-application-influx
+monitoring-application-influx: tmp-dir
+	$(pprint) "Running monitoring application with influx"
+	$(call bg, \
+		taskset --cpu-list $(CPUS_INFLUX) \
+		$(BIN_MONITORING_APP) \
+		--storage mem \
+		--data-addr $(ADDR_INFLUX_DATA) \
+		--query-addr $(ADDR_INFLUX_QUERY) \
 	,)
 
 .PHONY: monitoring-application-memstore
