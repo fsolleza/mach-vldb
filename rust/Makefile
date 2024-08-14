@@ -19,8 +19,7 @@ ADDR_MEMSTORE_QUERY := 0.0.0.0:3502
 ADDR_MACH_DATA  := 0.0.0.0:3601
 ADDR_MACH_QUERY := 0.0.0.0:3602
 
-#ADDRS_DATA := 0.0.0.0:3501 0.0.0.0:3601
-ADDRS_DATA := 0.0.0.0:3601
+ADDRS_DATA := $(ADDR_MACH_DATA)
 
 ADDR_KV_2 := 0.0.0.0:3702
 ADDR_KV_4 := 0.0.0.0:3704
@@ -148,6 +147,10 @@ scheduler-events: tmp-dir do-sudo
 syscall-latency: tmp-dir do-sudo
 	sudo taskset --cpu-list $(CPUS_SYSCALL_LATENCY) $(BIN_SYSCALL_LATENCY) \
 		--data-addrs $(ADDRS_DATA)
+
+.PHONY: influx-run
+influx-run:
+	$(call bg, $(BIN_KV_WORKLOAD) \
 
 ###################
 ## BUILD TARGETS ##

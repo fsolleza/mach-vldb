@@ -66,6 +66,7 @@ fn main() {
 async fn web_server() {
 	let app = Router::new()
 		.route("/", get(index))
+		.route("/charts", get(charts))
 		.route("/dataRequest", post(request_handler));
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 	println!("Listening!");
@@ -74,6 +75,10 @@ async fn web_server() {
 
 async fn index() -> Html<&'static str> {
 	Html(std::include_str!("../index.html"))
+}
+
+async fn charts() -> Html<&'static str> {
+	Html(std::include_str!("../charts.html"))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

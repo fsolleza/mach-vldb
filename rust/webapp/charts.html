@@ -1,0 +1,462 @@
+<html>
+  <head>
+
+    <style>
+    a.canvasjs-chart-credit {
+      visibility: hidden;
+    }
+
+    body {
+      font-family: Arial !important;
+      font-size: small;
+    }
+
+    .plotTitleOuter {
+       height: 150px;
+       width: 100px;
+    }
+
+    .plotTitleContainer {
+       height: 150px;
+       width: 100px;
+       display: table-cell;
+       vertical-align: middle;
+    }
+
+    .plotTitle {
+       display: inner-block;
+       float:right;
+       writing-mode: sideways-lr;
+       text-orientation: mixed;
+       font-weight: bold;
+       padding-right: 10px;
+       font-size: medium;
+    }
+
+    .mainDiv {
+      margin: auto;
+      display: grid;
+      grid-template-rows: auto;
+      row-gap: 10px;
+    }
+
+    .columnDiv {
+      margin: 0;
+    }
+
+  .headerRow {
+  }
+
+    .bodyRow {
+      display: grid;
+      grid-template-columns: 800px;
+      column-gap: 10px;
+  }
+
+    span.boldSpan {
+      font-weight: bold;
+    }
+
+  .charts {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    row-gap: 10px;
+  }
+
+    .chart {
+    height: 250px;
+    width: 800px;
+    margin: 0px auto;
+  }
+
+  </style>
+
+  <title>
+  </title>
+
+  </head>
+  <body>
+    <div class="mainDiv">
+
+      <div class="bodyRow">
+
+        <div id="leftColumn" class="columnDiv">
+          <p id="storageTitle"> Mach </p>
+
+          <p>
+            Data Received:
+            <span class="boldSpan" id="dataReceived">0</span>
+          </p>
+
+          <p>
+            Data Completeness:
+            <span class="boldSpan" id="dataCompleteness">0</span>
+          </p>
+
+          <div class="charts">
+            <div id="kvPercentileChart" class="chart"></div>
+            <div id="syscallPercentileChart" class="chart">bar</div>
+            <div id="schedulerChart" class="chart">bar</div>
+          </div>
+
+        </div> <!-- leftColumn -->
+      </div> <!-- bodyRow -->
+    </div> <!-- mainDiv -->
+
+  <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
+  <script>
+    /*
+     * Parameters
+     */
+    var TILE = 0.99;
+    var NOW = micros_now();
+    var STORAGE = "Mach";
+    var elem = document.getElementById("dataReceived");
+    elem.innerText = STORAGE;
+
+    /*
+     * Update data received
+     */
+    function updateDataReceived() {
+      var elem = document.getElementById("dataReceived");
+
+      var req = {};
+      req[STORAGE] = "DataReceived";
+
+      var update_fn = function(data) {
+        elem.innerText = data.DataReceived;
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Update data completeness
+     */
+    function updateCompleteness() {
+      var elem = document.getElementById("dataCompleteness");
+
+      var req = {};
+      req[STORAGE] = "DataCompleteness";
+
+      var update_fn = function(data) {
+        //console.log(data);
+        elem.innerText = data.DataCompleteness * 100 + "%";
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Chart: KvOp Latency
+     */
+    var kvPercentileData = [{
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    }];
+
+    var kvPercentileAxisX = {
+      interval: 10,
+      intervalType: "second",
+      labelWrap: false,
+      labelTextAlign: "right",
+      labelAngle: -20,
+      titleFontSize: 14,
+      labelFontSize: 14,
+      lineColor: "#ddd",
+    };
+
+    function initChartXAxis(xAxis, data) {
+      var xMax = NOW / 1000000 - 1;
+      var xMin = xMax - 60;
+      xAxis.minimum = secsToDt(xMin);
+      xAxis.maximum = secsToDt(xMax);
+      data.push({x: xAxis.minimum, y: null});
+    }
+
+    initChartXAxis(kvPercentileAxisX, kvPercentileData[0].dataPoints);
+
+    var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", {
+      title: {
+        text: "Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+      },
+
+      toolTip: { enabled: false, },
+
+      axisX: [kvPercentileAxisX],
+
+      data: kvPercentileData,
+    })
+
+    function updateKvPercentileChart() {
+
+      var now = micros_now();
+
+      // set x axis range
+      var xMax = now / 1000000 - 1;
+      var xMin = xMax - 60;
+      kvPercentileAxisX.minimum = secsToDt(xMin);
+      kvPercentileAxisX.maximum = secsToDt(xMax);
+
+      // setup new array for rendering
+      var newPoints = [];
+      var oldPoints = kvPercentileData[0].dataPoints;
+      for (var i = 0; i < oldPoints.length; i++) {
+        if (oldPoints[i].x > xMin) {
+          newPoints.push(oldPoints[i]);
+        }
+      }
+      kvPercentileData[0].dataPoints = newPoints;
+
+      // setup request for the previous second of data
+      var high = now - 1 * 1000000;
+      var low = high - 1 * 1000000;
+      var req = {};
+      req[STORAGE] = {
+            "KvOpsPercentile": {
+              "low_ts": low, "high_ts": high, "tile": TILE
+            }
+        }
+
+      var update_fn = function(data) {
+        //console.log(data["KvOpsPercentile"][0]);
+        var l = data.KvOpsPercentile.length;
+
+        for (var i = 0; i < l; i++) {
+          var item = data.KvOpsPercentile[i].KVOp;
+          var x = secsToDt(item.timestamp_micros / 1000000);
+          kvPercentileData[0].dataPoints.push(
+            { x: x, y: item.duration_micros }
+          );
+        }
+        kvPercentileChart.render();
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Chart: Read system calls
+     */
+
+    var syscallPercentileData = [{
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    }];
+
+    var syscallPercentileAxisX = {
+      interval: 10,
+      intervalType: "second",
+      labelWrap: false,
+      labelTextAlign: "right",
+      labelAngle: -20,
+      titleFontSize: 14,
+      labelFontSize: 14,
+      lineColor: "#ddd",
+    };
+    initChartXAxis(syscallPercentileAxisX, syscallPercentileData[0].dataPoints);
+
+    var syscallPercentileChart = new CanvasJS.Chart("syscallPercentileChart", {
+      title: {
+        text: "Read Syscall Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+      },
+
+      toolTip: { enabled: false, },
+
+      axisX: [syscallPercentileAxisX],
+
+      data: syscallPercentileData,
+    })
+
+    function updateReadSyscallsChart() {
+
+      var now = micros_now();
+
+      // set x axis range
+      var xMax = now / 1000000 - 1;
+      var xMin = xMax - 60;
+      syscallPercentileAxisX.minimum = secsToDt(xMin);
+      syscallPercentileAxisX.maximum = secsToDt(xMax);
+
+      // setup new array for rendering
+      var newPoints = [];
+      var oldPoints = syscallPercentileData[0].dataPoints;
+      for (var i = 0; i < oldPoints.length; i++) {
+        if (oldPoints[i].x > xMin) {
+          newPoints.push(oldPoints[i]);
+        }
+      }
+      syscallPercentileData[0].dataPoints = newPoints;
+
+      // setup request for the previous second of data
+      var high = now - 1 * 1000000;
+      var low = high - 1 * 1000000;
+      var req = {};
+      req[STORAGE] = {
+            "ReadSyscalls": {
+              "low_ts": low, "high_ts": high, "tile": TILE,
+            }
+        }
+
+      var update_fn = function(data) {
+        //console.log(data["ReadSyscalls"]);
+        var l = data.ReadSyscalls.length;
+        for (var i = 0; i < l; i++) {
+          var item = data.ReadSyscalls[i].Syscall;
+          var x = secsToDt(item.timestamp_micros / 1000000);
+          syscallPercentileData[0].dataPoints.push(
+            { x: x, y: item.duration_micros }
+          );
+        }
+        syscallPercentileChart.render();
+      };
+
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Chart: Scheduler events
+     */
+
+    var schedulerData = [{
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    }];
+
+    var schedulerAxisX = {
+      interval: 10,
+      intervalType: "second",
+      labelWrap: false,
+      labelTextAlign: "right",
+      labelAngle: -20,
+      titleFontSize: 14,
+      labelFontSize: 14,
+      lineColor: "#ddd",
+    };
+    initChartXAxis(schedulerAxisX, schedulerData[0].dataPoints);
+
+    var schedulerChart = new CanvasJS.Chart("schedulerChart", {
+      title: {
+        text: "Scheduler Events",
+        fontFamily: "arial",
+        fontSize: 16,
+        fontWeight: "bold",
+        backgroundColor: "#ffffff",
+      },
+
+      toolTip: { enabled: false, },
+
+      axisX: [schedulerAxisX],
+
+      data: schedulerData,
+    })
+
+    function updateSchedulerChart() {
+
+      var now = micros_now();
+
+      // set x axis range
+      var xMax = now / 1000000 - 1;
+      var xMin = xMax - 60;
+      schedulerAxisX.minimum = secsToDt(xMin);
+      schedulerAxisX.maximum = secsToDt(xMax);
+
+      // setup new array for rendering
+      var newPoints = [];
+      var oldPoints = schedulerData[0].dataPoints;
+      for (var i = 0; i < oldPoints.length; i++) {
+        if (oldPoints[i].x > xMin) {
+          newPoints.push(oldPoints[i]);
+        }
+      }
+      schedulerData[0].dataPoints = newPoints;
+
+      // setup request for the previous second of data
+      var high = now - 1 * 1000000;
+      var low = high - 1 * 1000000;
+      var req = {};
+      req[STORAGE] = {
+            "Scheduler": {
+              "low_ts": low, "high_ts": high
+            }
+        }
+
+      var update_fn = function(data) {
+        console.log(data["Scheduler"]);
+        var l = data.Scheduler.length;
+        for (var i = 0; i < l; i++) {
+          var item = data.Scheduler[i].Scheduler;
+          var x = secsToDt(item.timestamp_micros / 1000000);
+          schedulerData[0].dataPoints.push(
+            { x: x, y: 1 }
+          );
+        }
+        schedulerChart.render();
+      };
+      send_request(req, update_fn);
+    }
+
+    /*
+     * Helper function to send request and call func when request completes
+     */
+    function send_request(req, func) {
+      var request = JSON.stringify(req);
+      var request = new Request("http://localhost:3000/dataRequest", {
+        method: 'POST',
+        body: request,
+        headers: new Headers({
+            'Content-Type': 'application/json'
+        })
+      });
+      fetch(request)
+        .then(data => data.json())
+        .then(data => func(data));
+    }
+
+    /*
+     * Helper functions to get microseconds now
+     */
+    function micros_now() {
+      var nowSecs = Math.floor(Date.now() / 1000);
+      return nowSecs * 1000000;
+    }
+
+    /*
+     * Helper to convert seconds since epoch to a Date object
+     */
+    function secsToDt(s) {
+      var t = new Date(1970, 0, 1); // Epoch
+      t.setSeconds(s);
+      return t;
+    }
+
+    /*
+     * Update data and charts every second
+     */
+    syscallPercentileChart.render();
+    kvPercentileChart.render();
+    schedulerChart.render();
+    function updateData() {
+      updateDataReceived();
+      updateCompleteness();
+      updateReadSyscallsChart();
+      updateKvPercentileChart();
+      updateSchedulerChart();
+    }
+    setInterval(updateData, 1000);
+
+  </script>
+  </body>
+</html>
+
