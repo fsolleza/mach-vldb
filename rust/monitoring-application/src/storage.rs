@@ -2,110 +2,125 @@ use api::monitoring_application::*;
 use fxhash::FxHashMap;
 use std::{
 	sync::{Arc, RwLock},
-	time::SystemTime,
+	time::{Instant, Duration, SystemTime},
+	fmt::Write,
 };
 
 use influxdb_line_protocol::LineProtocolBuilder;
-use influxdb_iox_client::write::Client as WriteClient;
-use influxdb_iox_client::flight::Client as ReadClient;
-use influxdb_iox_client::connection::Builder;
-use influxdb_iox_client::format::QueryOutputFormat;
-use futures::stream::TryStreamExt;
-use arrow::record_batch::RecordBatch as ArrowRecordBatch;
-use serde_json::Value;
+use influxdb3_client::{Format, Client};
 use chrono::{DateTime, Utc};
 
 use mach_lib::{Entry, Partitions, PartitionsReader};
 
 
-pub trait Storage: Sync + Send + 'static {
+pub trait Storage: Sync + Send + 'static + Sized {
 	fn push_batch(&mut self, records: &[Record]);
-	//fn reader(&self) -> impl Reader;
+	fn duplicate(&self) -> Self {
+		unimplemented!()
+	}
 }
 
 pub trait Reader: Sync + Send + 'static + Clone {
 	fn handle_query(&self, query: &Request) -> Response;
 }
 
+async fn influx_write(addr: &str, db_name: &str, body: &str) {
+	let addr = format!("http://{}", addr);
+	let client = Client::new(addr).unwrap();
+	let body: String = body.into();
+	client
+		.api_v3_write_lp(db_name)
+		.body(body)
+		.send()
+		.await
+		.expect("send write_lp request");
+}
+
+async fn influx_read(addr: &str, db_name: &str, query: &str) -> serde_json::Value {
+	let client = Client::new(addr).unwrap();
+	let response_bytes = client
+		.api_v3_query_sql(db_name, query)
+		.format(Format::Json)
+		.send()
+		.await
+		.expect("send query_sql request");
+	let response_str = std::str::from_utf8(&response_bytes).unwrap();
+	serde_json::from_str(response_str).unwrap()
+}
+
 #[derive(Clone)]
 pub struct InfluxStore {
-	tuple_id: u64,
-	last_timestamp_nanos: u64,
-	write_addr: String,
-	read_addr: String,
+	host_addr: String,
+	buf: Vec<Record>
 }
 
 impl InfluxStore {
 
+	pub fn new(host_addr: &str) -> Self {
+		Self {
+			host_addr: host_addr.into(),
+			buf: Vec::new(),
+		}
+	}
+
 	fn do_write(&mut self, data: &[Record]) {
+		self.buf.extend_from_slice(data);
+		if self.buf.len() < 1024 * 1024 {
+			return;
+		}
+
+		let buf = self.build_lp(&self.buf);
+
+		let addr = self.host_addr.clone();
+
+		//let client = reqwest::blocking::Client::new();
+		//let url = format!("http://{base}/api/v3/write", base = self.host_addr);
+		//let params = &[("db", "foo")];
+
 		let rt = tokio::runtime::Builder::new_current_thread()
 			.enable_all()
 			.build()
 			.unwrap();
-		let write_addr = self.write_addr.clone();
-		let connection = rt.block_on(async {
-			Builder::default().build(&write_addr).await.unwrap()
-		});
-		let mut client = WriteClient::new(connection);
-	
-		let now = micros_since_epoch();
-		let buf = self.build_lp(&data);
-		let lp = std::str::from_utf8(&buf[..]).unwrap();
-		rt.block_on(async {
-			client.write_lp("vldb_demo", lp).await.unwrap();
-		});
+
+		let addr = self.host_addr.clone();
+		rt.block_on(influx_write(&addr, "vldb_demo", &buf));
+		self.buf.clear();
 	}
 
-	fn build_lp(&mut self, data: &[Record]) -> Vec<u8> {
+	fn build_lp(&self, data: &[Record]) -> String {
 		let mut lp = LineProtocolBuilder::new();
-		let timestamp_nanos = micros_since_epoch() * 1000;
 
-		// Reset tuple_id if the timestamp is now new. This way, we don't make
-		// excessively too many tags
-		if self.last_timestamp_nanos != timestamp_nanos {
-			self.tuple_id = 0;
-		}
-		self.last_timestamp_nanos = timestamp_nanos;
-
-		let mut tuple_id = self.tuple_id;
-		let mut tuple_id_buf = String::new();
+		let mut cpu_str = String::new();
 		for r in data {
-
-			// Put together deduplication tuple tag
-			tuple_id += 1;
-			tuple_id_buf.clear();
-			{
-				use std::fmt::Write;
-				write!(&mut tuple_id_buf, "{}", tuple_id);
-			}
-
 			match *r {
 				Record::KVOp {
 					cpu,
 					timestamp_micros,
 					duration_micros,
 				} => {
+					cpu_str.clear();
+					write!(cpu_str, "{}", cpu);
 					lp = lp
 						.measurement("table_kvop")
-						.tag("id", &tuple_id_buf)
-						.field("cpu", cpu)
-						.field("timestamp_micros", timestamp_micros)
+						.tag("cpu", &cpu_str)
 						.field("duration_micros", duration_micros)
-						.timestamp(timestamp_nanos as i64)
+						.timestamp(timestamp_micros as i64)
 						.close_line();
 				}
 				Record::Syscall {
+					cpu,
 					syscall_number,
 					timestamp_micros,
 					duration_micros,
 				} => {
+					cpu_str.clear();
+					write!(cpu_str, "{}", cpu);
 					lp = lp
 						.measurement("table_syscall")
-						.tag("id", &tuple_id_buf)
+						.tag("cpu", &cpu_str)
 						.field("syscall_number", syscall_number)
-						.field("timestamp_micros", timestamp_micros)
 						.field("duration_micros", duration_micros)
-						.timestamp(timestamp_nanos as i64)
+						.timestamp(timestamp_micros as i64)
 						.close_line();
 				}
 				Record::Scheduler {
@@ -115,65 +130,45 @@ impl InfluxStore {
 					timestamp_micros,
 					comm,
 				} => {
+					cpu_str.clear();
+					write!(cpu_str, "{}", cpu);
 					lp = lp
 						.measurement("table_sched")
-						.tag("id", &tuple_id_buf)
+						.tag("cpu", &cpu_str)
 						.field("prev_pid", prev_pid)
 						.field("next_pid", next_pid)
-						.field("cpu", cpu)
-						.field("timestamp_micros", timestamp_micros)
-						.timestamp(timestamp_nanos as i64)
+						.timestamp(timestamp_micros as i64)
 						.close_line();
 				}
 			}
 		}
 
-		self.tuple_id = tuple_id;
-		lp.build()
+		std::str::from_utf8(&lp.build()).unwrap().into()
 	}
 
-	fn handle_query(&self, query: &str) -> Value {
-
+	fn handle_query(&self, query: &str) -> serde_json::Value {
 		let rt = tokio::runtime::Builder::new_current_thread()
 			.enable_all()
 			.build()
 			.unwrap();
 
 		let query: String = query.into();
-		let read_addr: String = self.read_addr.clone();
-
-		let batches: Vec<_> = rt.block_on(async {
-			let connection = Builder::default()
-				.build(read_addr)
-				.await
-				.unwrap();
-			let mut client = ReadClient::new(connection);
-			client.add_header("bucket", "vldb_demo").unwrap();
-			let mut query_results =
-				client.influxql("vldb_demo", query.clone()).await.unwrap();
-			let mut batches: Vec<_> =
-				(&mut query_results).try_collect().await.unwrap();
-			let schema = query_results
-				.inner()
-				.schema()
-				.cloned()
-				.ok_or(influxdb_iox_client::flight::Error::NoSchema)
-				.unwrap();
-			batches.push(ArrowRecordBatch::new_empty(schema));
-			batches
-		});
-
-		let json_string = QueryOutputFormat::Json.format(&batches).unwrap();
-		serde_json::from_str(&json_string).unwrap()
+		let rt = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.unwrap();
+		let addr = self.host_addr.clone();
+		let result = rt.block_on(influx_read(&addr, "vldb_demo", &query));
+		result
 	}
 
 	fn exec_scheduler(&self, low: u64, high: u64) -> Vec<Record> {
 		let low = DateTime::from_timestamp_micros(low as i64).unwrap();
 		let high = DateTime::from_timestamp_micros(high as i64).unwrap();
 		let query = format!(
-    	    "SELECT * FROM table_sched WHERE time >= '{}' AND time <= '{}'",
+			"SELECT * FROM table_sched WHERE time >= '{}' AND time <= '{}'",
 			low, high
-    	);
+			);
 		let result = self.handle_query(&query);
 		println!("Scheduler requests: {:?}", result);
 		Vec::new()
@@ -183,11 +178,11 @@ impl InfluxStore {
 		let low = DateTime::from_timestamp_micros(low as i64).unwrap();
 		let high = DateTime::from_timestamp_micros(high as i64).unwrap();
 		let query = format!(
-    	    "SELECT * FROM table_kvop WHERE time >= '{}' AND time <= '{}'",
+			"SELECT * FROM table_kvop WHERE time >= '{}' AND time <= '{}'",
 			low, high
-    	);
+			);
 		let result = self.handle_query(&query);
-		println!("Scheduler requests: {:?}", result);
+		println!("KVOP requests: {:?}", result);
 		Vec::new()
 	}
 
@@ -195,11 +190,11 @@ impl InfluxStore {
 		let low = DateTime::from_timestamp_micros(low as i64).unwrap();
 		let high = DateTime::from_timestamp_micros(high as i64).unwrap();
 		let query = format!(
-    	    "SELECT * FROM table_syscalls WHERE time >= '{}' AND time <= '{}'",
+			"SELECT * FROM table_syscalls WHERE time >= '{}' AND time <= '{}'",
 			low, high
-    	);
+			);
 		let result = self.handle_query(&query);
-		println!("Scheduler requests: {:?}", result);
+		println!("Syscall requests: {:?}", result);
 		Vec::new()
 	}
 }
@@ -207,6 +202,10 @@ impl InfluxStore {
 impl Storage for InfluxStore {
 	fn push_batch(&mut self, records: &[Record]) {
 		self.do_write(records);
+	}
+
+	fn duplicate(&self) -> Self {
+		self.clone()
 	}
 }
 
@@ -273,14 +272,16 @@ impl MachStore {
 	fn push_syscall(
 		&mut self,
 		timestamp: u64,
+		cpu: u64,
 		syscall_number: u64,
 		timestamp_micros: u64,
 		duration_micros: u64,
 	) {
-		let mut bytes = [0u8; 24];
+		let mut bytes = [0u8; 32];
 		bytes[0..8].copy_from_slice(&syscall_number.to_be_bytes());
-		bytes[8..16].copy_from_slice(&timestamp_micros.to_be_bytes());
-		bytes[16..24].copy_from_slice(&duration_micros.to_be_bytes());
+		bytes[8..16].copy_from_slice(&cpu.to_be_bytes());
+		bytes[16..24].copy_from_slice(&timestamp_micros.to_be_bytes());
+		bytes[24..32].copy_from_slice(&duration_micros.to_be_bytes());
 		self.inner.push(1, 1, timestamp, &bytes);
 	}
 
@@ -319,19 +320,23 @@ impl Storage for MachStore {
 					self.push_kvop(ts, cpu, timestamp_micros, duration_micros);
 					sync_kvop = true;
 				}
+
 				Record::Syscall {
 					syscall_number,
+					cpu,
 					timestamp_micros,
 					duration_micros,
 				} => {
 					self.push_syscall(
 						ts,
+						cpu,
 						syscall_number,
 						timestamp_micros,
 						duration_micros,
 					);
 					sync_syscall = true;
 				}
+
 				Record::Scheduler {
 					prev_pid,
 					next_pid,
@@ -398,7 +403,11 @@ impl MachReader {
 			let comm: [u8; 16] = data[32..48].try_into().unwrap();
 
 			let rec = Record::Scheduler {
-				prev_pid, next_pid, cpu, timestamp_micros, comm
+				prev_pid,
+				next_pid,
+				cpu,
+				timestamp_micros,
+				comm
 			};
 			events.push(rec);
 		}
@@ -412,7 +421,7 @@ impl MachReader {
 		tile: f64,
 	) -> Vec<Record> {
 
-		let mut raw_data: Vec<(u64, u64, u64)> = Vec::new();
+		let mut raw_data: Vec<(u64, u64, u64, u64)> = Vec::new();
 
 		let snapshot = match self.inner.snapshot(&[(1, 1)]) {
 			Some(x) => x,
@@ -430,9 +439,10 @@ impl MachReader {
 			}
 			let data = &entry.data;
 			let syscall_number = u64::from_be_bytes(data[0..8].try_into().unwrap());
-			let timestamp_micros = u64::from_be_bytes(data[8..16].try_into().unwrap());
-			let duration_micros = u64::from_be_bytes(data[16..24].try_into().unwrap());
-			raw_data.push((syscall_number, timestamp_micros, duration_micros));
+			let cpu = u64::from_be_bytes(data[8..16].try_into().unwrap());
+			let timestamp_micros = u64::from_be_bytes(data[16..24].try_into().unwrap());
+			let duration_micros = u64::from_be_bytes(data[24..32].try_into().unwrap());
+			raw_data.push((syscall_number, cpu, timestamp_micros, duration_micros));
 		}
 
 		raw_data.sort_by_key(|x| x.2);
@@ -444,8 +454,9 @@ impl MachReader {
 		for item in raw_data.iter() {
 			let rec = Record::Syscall {
 				syscall_number: item.0,
-				timestamp_micros: item.1,
-				duration_micros: item.2
+				cpu: item.1,
+				timestamp_micros: item.2,
+				duration_micros: item.3,
 			};
 			events.push(rec);
 		}
@@ -491,7 +502,7 @@ impl MachReader {
 			let rec = Record::KVOp {
 				cpu: item.0,
 				timestamp_micros: item.1,
-				duration_micros: item.2
+				duration_micros: item.2,
 			};
 			events.push(rec);
 		}
@@ -533,12 +544,14 @@ impl Reader for MachReader {
 #[derive(Clone)]
 pub struct Memstore {
 	pub data: Arc<RwLock<Vec<(u64, Record)>>>,
+	pub rps: Option<f64>
 }
 
 impl Memstore {
 	pub fn new() -> Self {
 		Self {
 			data: Arc::new(RwLock::new(Vec::new())),
+			rps: None,
 		}
 	}
 
@@ -650,10 +663,18 @@ impl Memstore {
 
 impl Storage for Memstore {
 	fn push_batch(&mut self, records: &[Record]) {
+		let now = Instant::now();
+
 		let ts = micros_since_epoch();
 		let mut guard = self.data.write().unwrap();
 		for r in records {
 			guard.push((ts, *r));
+		}
+		drop(guard);
+
+		if let Some(rps) = self.rps {
+			let expected = Duration::from_secs_f64((records.len() as f64 * (1.0 / rps)));
+			while now.elapsed() < expected {}
 		}
 	}
 }

@@ -34,6 +34,7 @@ use syscall_latency::*;
 pub struct SyscallEvent {
 	pub pid: u32,
 	pub tid: u32,
+	pub cpu: u32,
 	pub syscall_number: u64,
 	pub timestamp: u64,
 }
@@ -130,7 +131,7 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 						*entry += 1;
 						(key.0, key.1, key.2, cnt)
 					};
-					assert!(entry_events.insert(key, event.timestamp).is_none());
+					assert!(entry_events.insert(key, (event.cpu as u64, event.timestamp)).is_none());
 				}
 			}
 
@@ -146,7 +147,7 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 						(key.0, key.1, key.2, cnt)
 					};
 
-					if let Some(start) = entry_events.remove(&key) {
+					if let Some((cpu, start)) = entry_events.remove(&key) {
 
 						let duration_micros = (event.timestamp - start) / 1000;
 						let start_time = now + Duration::from_micros(start / 1000);
@@ -155,6 +156,7 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 						let x = Record::Syscall {
 							timestamp_micros,
 							duration_micros,
+							cpu,
 							syscall_number: event.syscall_number,
 						};
 						durations.push(x);

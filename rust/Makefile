@@ -19,17 +19,18 @@ ADDR_MEMSTORE_QUERY := 0.0.0.0:3502
 ADDR_MACH_DATA  := 0.0.0.0:3601
 ADDR_MACH_QUERY := 0.0.0.0:3602
 
-ADDR_INFLUX_DATA  := 0.0.0.0:3401
-ADDR_INFLUX_QUERY := 0.0.0.0:3402
+ADDR_INFLUX_SERVER := 0.0.0.0:3400
+ADDR_INFLUX_DATA   := 0.0.0.0:3401
+ADDR_INFLUX_QUERY  := 0.0.0.0:3402
 
-ADDRS_DATA := $(ADDR_INFLUX_DATA)
+ADDRS_DATA := $(ADDR_INFLUX_DATA) $(ADDR_MACH_DATA)
 
 ADDR_KV_2 := 0.0.0.0:3702
 ADDR_KV_4 := 0.0.0.0:3704
 ADDR_KV_6 := 0.0.0.0:3706
 ADDR_KV_8 := 0.0.0.0:3708
 
-WORKLOAD_ADDRS := $(ADDR_KV_2)
+WORKLOAD_ADDRS := $(ADDR_KV_2) $(ADDR_KV_4) $(ADDR_KV_6) $(ADDR_KV_8)
 
 CPUS_MEMSTORE         := 50-53
 CPUS_MACH             := 54-55
@@ -48,6 +49,7 @@ BIN_SYSCALL_LATENCY  := ./syscall-latency/target/release/syscall-latency
 
 PATH_BG_PIDS  := tmp/bg_pids
 PATH_WORKLOAD := /nvme/data/tmp/vldb/workload
+PATH_INFLUX   := /nvme/data/tmp/vldb/influx
 
 ###############
 ## Functions ##
@@ -88,6 +90,7 @@ sane-terminal:
 application: \
 	stop \
 	tmp-dir \
+	monitoring-application-mach \
 	monitoring-application-influx \
 	kv-workload \
 	webapp \
@@ -111,9 +114,10 @@ monitoring-application-influx: tmp-dir
 	$(call bg, \
 		taskset --cpu-list $(CPUS_INFLUX) \
 		$(BIN_MONITORING_APP) \
-		--storage mem \
+		--storage influx \
 		--data-addr $(ADDR_INFLUX_DATA) \
 		--query-addr $(ADDR_INFLUX_QUERY) \
+		--influx-server-addr $(ADDR_INFLUX_SERVER) \
 	,)
 
 .PHONY: monitoring-application-memstore
@@ -153,6 +157,28 @@ kv-workload: tmp-dir
 		--rate-addr $(ADDR_KV_2) \
 	,2)
 
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 4 \
+		--data-dir $(PATH_WORKLOAD)4 \
+		--data-addrs $(ADDRS_DATA) \
+		--rate-addr $(ADDR_KV_4) \
+	,4)
+
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 6 \
+		--data-dir $(PATH_WORKLOAD)6 \
+		--data-addrs $(ADDRS_DATA) \
+		--rate-addr $(ADDR_KV_6) \
+	,6)
+
+	$(call bg, $(BIN_KV_WORKLOAD) \
+		--cpu 8 \
+		--data-dir $(PATH_WORKLOAD)8 \
+		--data-addrs $(ADDRS_DATA) \
+		--rate-addr $(ADDR_KV_8) \
+	,8)
+
+
 .PHONY: scheduler-events
 scheduler-events: tmp-dir do-sudo
 	sudo taskset --cpu-list $(CPUS_SCHEDULER_EVENTS) $(BIN_SCHEDULER_EVENTS) \
@@ -166,7 +192,20 @@ syscall-latency: tmp-dir do-sudo
 
 .PHONY: influx-run
 influx-run:
-	$(call bg, $(BIN_KV_WORKLOAD) \
+	rm -rf $(PATH_INFLUX)
+	./influxdb/target/release/influxdb3 serve \
+		--host-id influx_vldb \
+		--http-bind $(ADDR_INFLUX_SERVER) \
+		--object-store memory \
+		--wal-max-write-buffer-size 1000000 \
+		--buffer-mem-limit-mb 10000 \
+	    --max-http-request-size 1000000000
+
+	#cd influxdb; \
+	#CARGO_PROFILE_RELEASE_DEBUG=true \
+	#cargo flamegraph --root --bin influxdb3 -- serve \
+	#./influxdb3/target/release/influxdb3 -- serve \
+		#--object-store file --data-dir $(PATH_INFLUX)
 
 ###################
 ## BUILD TARGETS ##
@@ -196,6 +235,10 @@ build-scheduler-events:
 build-syscall-latency:
 	$(call rust_build,syscall-latency,,)
 
+.PHONY: build-syscall-latency
+build-influxdb:
+	$(call rust_build,influxdb,,)
+
 .PHONY: build-all
 build-all: tmp-dir \
 	build-webapp \
@@ -203,9 +246,9 @@ build-all: tmp-dir \
 	build-kv-workload \
 	build-matrix-multiply \
 	build-scheduler-events \
+	build-influxdb \
 	build-syscall-latency
 	$(pprint) "building done"
-
 
 #############
 ## HELPERS ##

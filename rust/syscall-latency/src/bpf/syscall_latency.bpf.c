@@ -26,6 +26,7 @@ struct sys_exit_ctx {
 struct syscall_event {
 	uint32_t pid;
 	uint32_t tid;
+	uint32_t cpu;
 	uint64_t syscall_number;
 	uint64_t timestamp;
 };
@@ -145,6 +146,7 @@ int handle_sys_enter(struct sys_enter_ctx *ctx) {
     struct syscall_event e = {0};
     e.pid = pid;
     e.tid = tid;
+	e.cpu = bpf_get_smp_processor_id();
     e.syscall_number = syscall_number;
     e.timestamp = time;
 

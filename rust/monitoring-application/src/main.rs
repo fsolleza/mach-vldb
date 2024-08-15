@@ -60,8 +60,8 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 	}
 }
 
-fn init_ingestion<S: Storage>(data_addr: &str, mut store: S) {
-	let (data_tx, data_rx) = bounded::<RecordBatch>(1024);
+fn init_ingestion<S: Storage>(data_addr: &str, mut store: S, n_writers: usize) {
+	let (data_tx, data_rx) = bounded::<RecordBatch>(32);
 	println!("Setting up listener for data at {:?}", data_addr);
 	let data_listener = TcpListener::bind(data_addr).unwrap();
 
@@ -85,11 +85,29 @@ fn init_ingestion<S: Storage>(data_addr: &str, mut store: S) {
 	 * Setup the storage writer thread, receiving data over the channel and
 	 * writing into storage
 	 */
-	thread::spawn(move || {
-		while let Ok(batch) = data_rx.recv() {
-			store.push_batch(&*batch);
+	if n_writers == 0 {
+		panic!("0 writers!");
+	}
+
+	else if n_writers == 1 {
+		thread::spawn(move || {
+			while let Ok(batch) = data_rx.recv() {
+				store.push_batch(&*batch);
+			}
+		});
+	}
+
+	else {
+		for _ in 0..n_writers {
+			let data_rx = data_rx.clone();
+			let mut store = store.duplicate();
+			thread::spawn(move || {
+				while let Ok(batch) = data_rx.recv() {
+					store.push_batch(&*batch);
+				}
+			});
 		}
-	});
+	}
 }
 
 fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
@@ -168,6 +186,9 @@ struct Args {
 	/// mem, mach, or  influx
 	#[arg(short, long)]
 	storage: String,
+
+	#[arg(short, long)]
+	influx_server_addr: Option<String>,
 }
 
 fn main() {
@@ -179,16 +200,30 @@ fn main() {
 	match args.storage.as_str() {
 		"mem" => {
 			let memstorage = Memstore::new();
-			init_ingestion(&args.data_addr, memstorage.clone());
+			init_ingestion(&args.data_addr, memstorage.clone(), 1);
 			let args = args.clone();
 			init_query_handler(args, memstorage);
 		}
 		"mach" => {
 			let mach = MachStore::new("/nvme/data/tmp/vldb/mach");
 			let reader = mach.reader();
-			init_ingestion(&args.data_addr, mach);
+			init_ingestion(&args.data_addr, mach, 1);
 			let args = args.clone();
 			init_query_handler(args, reader);
+		},
+		"influx" => {
+
+			let mut memstorage = Memstore::new();
+			memstorage.rps = Some((1024 * 50) as f64);
+			init_ingestion(&args.data_addr, memstorage.clone(), 1);
+			let args = args.clone();
+			init_query_handler(args, memstorage);
+
+			//let addr = args.influx_server_addr.as_ref().unwrap();
+			//let influx_server = InfluxStore::new(addr);
+			//init_ingestion(&args.data_addr, influx_server.clone(), 32);
+			//let args = args.clone();
+			//init_query_handler(args, influx_server);
 		},
 		_ => panic!("unhandled storage argument {}", args.storage),
 	}

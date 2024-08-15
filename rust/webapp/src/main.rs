@@ -69,7 +69,8 @@ fn main() {
 async fn web_server() {
 	let app = Router::new()
 		.route("/", get(index))
-		.route("/charts", get(charts))
+		.route("/influx", get(influx))
+		.route("/mach", get(mach))
 		.route("/dataRequest", post(request_handler));
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 	println!("Listening!");
@@ -80,9 +81,16 @@ async fn index() -> Html<&'static str> {
 	Html(std::include_str!("../index.html"))
 }
 
-async fn charts() -> Html<&'static str> {
-	Html(std::include_str!("../charts.html"))
+async fn mach() -> Html<&'static str> {
+  let text = std::include_str!("../mach_charts.html");
+	Html(text)
 }
+
+async fn influx() -> Html<&'static str> {
+  let text = std::include_str!("../influx_charts.html");
+	Html(&text)
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 enum WebRequest {

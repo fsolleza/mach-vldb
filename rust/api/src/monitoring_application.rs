@@ -11,6 +11,7 @@ pub enum Record {
 	},
 
 	Syscall {
+		cpu: u64,
 		syscall_number: u64,
 		timestamp_micros: u64,
 		duration_micros: u64,
