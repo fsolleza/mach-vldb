@@ -68,7 +68,7 @@ fn main() {
 		thread::sleep(Duration::from_secs(10));
 		let e = Instant::now();
 		let mut c = 0;
-		while e.elapsed() < Duration::from_millis(100) {
+		while e.elapsed() < Duration::from_millis(20) {
 			c += 1;
 		}
 		println!("Total: {}", c);

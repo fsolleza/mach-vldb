@@ -61,7 +61,7 @@ fn data_receiver(mut stream: TcpStream, chan: Sender<RecordBatch>) {
 }
 
 fn init_ingestion<S: Storage>(data_addr: &str, mut store: S, n_writers: usize) {
-	let (data_tx, data_rx) = bounded::<RecordBatch>(32);
+	let (data_tx, data_rx) = bounded::<RecordBatch>(128);
 	println!("Setting up listener for data at {:?}", data_addr);
 	let data_listener = TcpListener::bind(data_addr).unwrap();
 

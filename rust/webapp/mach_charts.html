@@ -107,7 +107,7 @@
     /*
      * Parameters
      */
-    var TILE = 0.99;
+    var TILE = 0.999;
     var NOW = micros_now();
     var STORAGE = "Mach";
     var elem = document.getElementById("dataReceived");
@@ -166,6 +166,8 @@
       lineColor: "#ddd",
     };
 
+    var kvPercentileAxisY = {}
+
     function initChartXAxis(xAxis, data) {
       var xMax = NOW / 1000000 - 1;
       var xMin = xMax - 60;
@@ -188,6 +190,7 @@
       toolTip: { enabled: false, },
 
       axisX: [kvPercentileAxisX],
+      axisY: [kvPercentileAxisY],
 
       data: kvPercentileData,
     })
@@ -224,10 +227,16 @@
 
       var update_fn = function(data) {
         //console.log(data["KvOpsPercentile"][0]);
-        var l = data.KvOpsPercentile.length;
+
+        var max_y = data.KvOpsPercentile.max_y;
+        var roundup = roundUpY(max_y);
+        console.log("kv max y", max_y, roundup);
+        kvPercentileAxisY.maximum = roundup;
+
+        var l = data.KvOpsPercentile.data.length;
 
         for (var i = 0; i < l; i++) {
-          var item = data.KvOpsPercentile[i].KVOp;
+          var item = data.KvOpsPercentile.data[i].KVOp;
           var x = secsToDt(item.timestamp_micros / 1000000);
           kvPercentileData[0].dataPoints.push(
             { x: x, y: item.duration_micros }
@@ -259,6 +268,9 @@
       labelFontSize: 14,
       lineColor: "#ddd",
     };
+
+    var syscallPercentileAxisY = {}
+
     initChartXAxis(syscallPercentileAxisX, syscallPercentileData[0].dataPoints);
 
     var syscallPercentileChart = new CanvasJS.Chart("syscallPercentileChart", {
@@ -273,6 +285,7 @@
       toolTip: { enabled: false, },
 
       axisX: [syscallPercentileAxisX],
+      axisY: [syscallPercentileAxisY],
 
       data: syscallPercentileData,
     })
@@ -309,9 +322,15 @@
 
       var update_fn = function(data) {
         //console.log(data["ReadSyscalls"]);
-        var l = data.ReadSyscalls.length;
+
+        var max_y = data.ReadSyscalls.max_y;
+        var roundup = roundUpY(max_y);
+        console.log("duration max y", max_y, roundup);
+        syscallPercentileAxisY.maximum = roundup;
+
+        var l = data.ReadSyscalls.data.length;
         for (var i = 0; i < l; i++) {
-          var item = data.ReadSyscalls[i].Syscall;
+          var item = data.ReadSyscalls.data[i].Syscall;
           var x = secsToDt(item.timestamp_micros / 1000000);
           syscallPercentileData[0].dataPoints.push(
             { x: x, y: item.duration_micros }
@@ -438,6 +457,40 @@
       var t = new Date(1970, 0, 1); // Epoch
       t.setSeconds(s);
       return t;
+    }
+
+    /*
+     * Helper to convert duration in micros to nearest larger multiple of 10us,
+     * 100us, 1000us, 10000us
+     */
+    function roundUpY(x) {
+      if (x < 10) {
+        return 10;
+      }
+
+      else if (x < 100) {
+        return x - x % 10 + 20;
+      }
+
+      else if (x < 1000) {
+        return x - x % 100 + 200;
+      }
+
+      else if (x < 10000) {
+        return x - x % 1000 + 2000;
+      }
+
+      else if (x < 100000) {
+        return x - x % 10000 + 20000;
+      }
+
+      else if (x < 1000000) {
+        return x - x % 100000 + 200000;
+      }
+
+      else {
+        return x;
+      }
     }
 
     /*

@@ -26,6 +26,16 @@ pub enum Record {
 	}
 }
 
+impl Record {
+	pub fn duration_micros(&self) -> Option<u64> {
+		match self {
+			Self::KVOp { duration_micros, .. } => Some(*duration_micros),
+			Self::Syscall { duration_micros, .. } => Some(*duration_micros),
+			Self::Scheduler { .. } => None,
+		}
+	}
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordBatch {
 	pub inner: Vec<Record>,

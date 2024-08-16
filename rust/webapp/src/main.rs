@@ -113,14 +113,23 @@ impl WebRequest {
 	}
 }
 
+static MAX_KVOPS_DURATION: AtomicU64 = AtomicU64::new(0);
+static MAX_READ_SYSCALLS_DURATION: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Serialize, Deserialize)]
 enum WebResponse {
 	SetQps,
 	OpsPerSec(u64),
 	DataReceived(u64),
 	DataCompleteness(f64),
-	KvOpsPercentile(Vec<api::monitoring_application::Record>),
-	ReadSyscalls(Vec<api::monitoring_application::Record>),
+	KvOpsPercentile {
+		max_y: u64,
+		data: Vec<api::monitoring_application::Record>
+	},
+	ReadSyscalls {
+		max_y: u64,
+		data: Vec<api::monitoring_application::Record>
+	},
 	Scheduler(Vec<api::monitoring_application::Record>),
 }
 
@@ -129,8 +138,30 @@ impl Into<WebResponse> for api::monitoring_application::Response {
 		match self {
 			Self::DataReceived(x) => WebResponse::DataReceived(x),
 			Self::DataCompleteness(x) => WebResponse::DataCompleteness(x),
-			Self::KvOpsPercentile(x) => WebResponse::KvOpsPercentile(x),
-			Self::ReadSyscalls(x) => WebResponse::ReadSyscalls(x),
+			Self::KvOpsPercentile(x) => {
+				let max_y = x.iter().map(|x| {
+					x.duration_micros().unwrap()
+				}).max();
+
+				if let Some(max_y) = max_y {
+					MAX_KVOPS_DURATION.fetch_max(max_y, SeqCst);
+				}
+				let max_y = MAX_KVOPS_DURATION.load(SeqCst);
+
+				WebResponse::KvOpsPercentile { max_y, data: x }
+			},
+			Self::ReadSyscalls(x) => {
+				let max_y = x.iter().map(|x| {
+					x.duration_micros().unwrap()
+				}).max();
+
+				if let Some(max_y) = max_y {
+					MAX_READ_SYSCALLS_DURATION.fetch_max(max_y, SeqCst);
+				}
+				let max_y = MAX_READ_SYSCALLS_DURATION.load(SeqCst);
+
+				WebResponse::ReadSyscalls { max_y, data: x }
+			},
 			Self::Scheduler(x) => WebResponse::Scheduler(x),
 		}
 	}
