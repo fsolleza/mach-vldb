@@ -113,9 +113,6 @@ impl WebRequest {
 	}
 }
 
-static MAX_KVOPS_DURATION: AtomicU64 = AtomicU64::new(0);
-static MAX_READ_SYSCALLS_DURATION: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Serialize, Deserialize)]
 enum WebResponse {
 	SetQps,
@@ -135,6 +132,11 @@ enum WebResponse {
 
 impl Into<WebResponse> for api::monitoring_application::Response {
 	fn into(self) -> WebResponse  {
+    lazy_static! {
+      static ref KV_OPS_DURATIONS: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+      static ref READ_SYSCALLS_DURATION: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+    }
+
 		match self {
 			Self::DataReceived(x) => WebResponse::DataReceived(x),
 			Self::DataCompleteness(x) => WebResponse::DataCompleteness(x),
@@ -143,23 +145,42 @@ impl Into<WebResponse> for api::monitoring_application::Response {
 					x.duration_micros().unwrap()
 				}).max();
 
-				if let Some(max_y) = max_y {
-					MAX_KVOPS_DURATION.fetch_max(max_y, SeqCst);
-				}
-				let max_y = MAX_KVOPS_DURATION.load(SeqCst);
-
+        // Calculate the max y axis value based on previous 60 max y values
+				let max_y = {
+          let mut guard = KV_OPS_DURATIONS.lock().unwrap();
+          if let Some(max_y) = max_y {
+            if guard.len() == 60 {
+              guard.remove(0);
+            }
+            guard.push(max_y);
+				  }
+          match guard.iter().max() {
+            Some(x) => *x,
+            None => 10,
+          }
+        };
 				WebResponse::KvOpsPercentile { max_y, data: x }
 			},
+
 			Self::ReadSyscalls(x) => {
 				let max_y = x.iter().map(|x| {
 					x.duration_micros().unwrap()
 				}).max();
 
-				if let Some(max_y) = max_y {
-					MAX_READ_SYSCALLS_DURATION.fetch_max(max_y, SeqCst);
-				}
-				let max_y = MAX_READ_SYSCALLS_DURATION.load(SeqCst);
-
+        // Calculate the max y axis value based on previous 60 max y values
+				let max_y = {
+          let mut guard = READ_SYSCALLS_DURATION.lock().unwrap();
+          if let Some(max_y) = max_y {
+            if guard.len() == 60 {
+              guard.remove(0);
+            }
+            guard.push(max_y);
+				  }
+          match guard.iter().max() {
+            Some(x) => *x,
+            None => 10,
+          }
+        };
 				WebResponse::ReadSyscalls { max_y, data: x }
 			},
 			Self::Scheduler(x) => WebResponse::Scheduler(x),

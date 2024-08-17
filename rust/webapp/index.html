@@ -1,97 +1,150 @@
 <html>
   <head>
-
     <style>
-    a.canvasjs-chart-credit {
-      visibility: hidden;
-    }
+      a.canvasjs-chart-credit {
+        visibility: hidden;
+      }
 
-    body {
-      font-family: Arial !important;
-      font-size: small;
-    }
+      body {
+        font-family: Arial !important;
+        font-size: small;
+      }
 
-    .plotTitleOuter {
-       height: 150px;
-       width: 100px;
-    }
+      .plotTitleOuter {
+         height: 150px;
+         width: 100px;
+      }
 
-    .plotTitleContainer {
-       height: 150px;
-       width: 100px;
-       display: table-cell;
-       vertical-align: middle;
-    }
+      .plotTitleContainer {
+         height: 150px;
+         width: 100px;
+         display: table-cell;
+         vertical-align: middle;
+      }
 
-    .plotTitle {
-       display: inner-block;
-       float:right;
-       writing-mode: sideways-lr;
-       text-orientation: mixed;
-       font-weight: bold;
-       padding-right: 10px;
-       font-size: medium;
-    }
+      .plotTitle {
+         display: inner-block;
+         float:right;
+         writing-mode: sideways-lr;
+         text-orientation: mixed;
+         font-weight: bold;
+         padding-right: 10px;
+         font-size: medium;
+      }
 
-    .mainDiv {
-      margin: auto;
-      display: grid;
-      grid-template-rows: auto;
-      row-gap: 10px;
-    }
+      .mainDiv {
+        margin: auto;
+        display: grid;
+        grid-template-rows: auto 200px;
+        row-gap: 10px;
+      }
 
-    .columnDiv {
-      margin: 0;
-    }
+      .columnDiv {
+        margin: 0;
+      }
 
-  .headerRow {
-  }
+      .bodyRow {
+        display: grid;
+        grid-template-columns: 800px 800px;
+        column-gap: 10px;
+      }
 
-    .bodyRow {
-      display: grid;
-      grid-template-columns: 800px 800px;
-      column-gap: 10px;
-  }
+      span.boldSpan {
+        font-weight: bold;
+      }
 
-    span.boldSpan {
-      font-weight: bold;
-    }
+      .chartsRow {
+        display: grid;
+        grid-template-columns: auto auto;
+        column-gap: 5px;
+      }
 
-  .charts {
-    display: grid;
-    grid-template-rows: auto auto;
-    row-gap: 10px;
-  }
+      .chartFrame {
+        height: 750px;
+        width: 850px;
+        border:none;
+      }
 
-    .chart {
-    height: 250px;
-    width: 800px;
-    margin: 0px auto;
-  }
+      .controlRow {
+        height: 50px;
+      }
 
-  </style>
+      .controlRowContainer {
+        height: 50px;
+        float: left;
+      }
 
-  <title>
-  </title>
+      .controlRowContainerItem {
+        height: 50px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      #queryRateDiv {
+        width: auto;
+        height: 50px;
+      }
+
+    </style>
+
+    <title> </title>
 
   </head>
+
   <body>
     <div class="mainDiv">
 
-      <div class="headerRow">
-        <p>Queries Per Second</p>
+      <div class="controlRow">
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <b>Application Request Rate (Per Second): </b>
+          </div>
+        </div>
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <input
+              type="range"
+              min="1000"
+              max="1000000"
+              value="10000"
+              id="qpsToggle"
+              oninput="qpsValue.value = qpsToggle.value - qpsToggle.value % 10000">
+            </input>
+          </div>
+        </div>
 
-        <p>
-          <input type="range" min="1000" max="1000000" value="10000"
-            id="qpsToggle" oninput="qpsValue.value = qpsToggle.value - qpsToggle.value % 10000">
-          </br>
-          <output id="qpsValue">10000</output>
-        </p>
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <b><output id="qpsValue">10000</output></b>
+          </div>
+        </div>
 
-        <p>
-          KV Ops per Second: <span class="boldSpan" id="kvOpsPerSec">0</span>
-        </p>
-      </div> <!-- headerRow -->
+        <div class="controlRowContainer">
+          <div style="width:10px"></div>
+        </div>
+
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            Measured Query Rate:&nbsp <span class="boldSpan" id="kvOpsPerSec">0</span>
+          </div>
+        </div>
+      </div> <!-- controlRow -->
+
+      <div class="chartsRow">
+
+        <div>
+          <iframe src="influx" class="chartFrame">
+          </iframe>
+        </div>
+
+        <div>
+          <iframe src="mach" class="chartFrame">
+          </iframe>
+        </div>
+
+      </div> <!-- chartsRow -->
+
     </div> <!-- mainDiv -->
 
   <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
@@ -101,7 +154,6 @@
      */
     var TILE = 0.99
     var NOW = micros_now();
-
 
     /*
      * Set queries per second in the RDB application

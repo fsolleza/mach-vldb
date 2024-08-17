@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 use core::time::Duration;
 
-use std::net::TcpStream;
-use std::io::Write;
-use api::monitoring_application::{Record, RecordBatch};
 use anyhow::bail;
 use anyhow::Result;
+use api::monitoring_application::{Record, RecordBatch};
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use lazy_static::*;
@@ -13,14 +11,16 @@ use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::Skel;
 use libbpf_rs::skel::SkelBuilder;
 use libbpf_rs::PerfBufferBuilder;
-use std::collections;
-use std::process;
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst};
-use std::thread;
-use std::process::exit;
-use std::time::*;
 use serde::*;
+use std::collections;
 use std::collections::HashMap;
+use std::io::Write;
+use std::net::TcpStream;
+use std::process;
+use std::process::exit;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::thread;
+use std::time::*;
 
 mod syscall_latency {
 	include!(concat!(env!("OUT_DIR"), "/syscall_latency.skel.rs"));
@@ -99,9 +99,7 @@ fn sink(addrs: Vec<String>, rx: Receiver<Vec<Record>>) {
 	println!("Connected!");
 	while let Ok(records) = rx.recv() {
 		COUNTER.fetch_add(records.len(), SeqCst);
-		let records = RecordBatch {
-			inner: records,
-		};
+		let records = RecordBatch { inner: records };
 		let data = records.to_binary();
 		let sz = data.len();
 		for stream in streams.iter_mut() {
@@ -111,9 +109,7 @@ fn sink(addrs: Vec<String>, rx: Receiver<Vec<Record>>) {
 	}
 }
 
-fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
-
-	let now = SystemTime::now();
+fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>, program_start_micros: u64) {
 
 	let mut entry_events = HashMap::new();
 	let mut entry_event_key_count = HashMap::new();
@@ -126,12 +122,15 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 					let event = x.buffer[i];
 					let key = {
 						let key = (event.pid, event.tid, event.syscall_number);
-						let entry = entry_event_key_count.entry(key).or_insert(0);
+						let entry =
+							entry_event_key_count.entry(key).or_insert(0);
 						let cnt = *entry;
 						*entry += 1;
 						(key.0, key.1, key.2, cnt)
 					};
-					assert!(entry_events.insert(key, (event.cpu as u64, event.timestamp)).is_none());
+					assert!(entry_events
+						.insert(key, (event.cpu as u64, event.timestamp))
+						.is_none());
 				}
 			}
 
@@ -141,17 +140,19 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>) {
 					let event = x.buffer[i];
 					let key = {
 						let key = (event.pid, event.tid, event.syscall_number);
-						let entry = exit_event_key_count.entry(key).or_insert(0);
+						let entry =
+							exit_event_key_count.entry(key).or_insert(0);
 						let cnt = *entry;
 						*entry += 1;
 						(key.0, key.1, key.2, cnt)
 					};
 
 					if let Some((cpu, start)) = entry_events.remove(&key) {
+						let start_ts_micros = start / 1000;
+						let end_ts_micros = event.timestamp / 1000;
 
-						let duration_micros = (event.timestamp - start) / 1000;
-						let start_time = now + Duration::from_micros(start / 1000);
-						let timestamp_micros = start_time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u64;
+						let duration_micros = end_ts_micros - start_ts_micros;
+						let timestamp_micros = program_start_micros + start_ts_micros;
 
 						let x = Record::Syscall {
 							timestamp_micros,
@@ -196,19 +197,24 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 	let mut skel = open_skel.load().unwrap();
 	skel.attach().unwrap();
 
+	// Forces a syscall and populates the REFERENCE_TIME field in BPF
+	let process_id = std::process::id();
+	println!("Process id: {}", process_id);
+
 	{
 		let sender = combiner_tx.clone();
-		let perf = PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_enter())
-			.sample_cb(move |_cpu: i32, bytes: &[u8]| {
-				println!("Got start syscalls");
-				let bytes_ptr = bytes.as_ptr();
-				let ptr = bytes_ptr as *const SyscallEventBuffer;
-				let event_buffer = unsafe { *ptr };
-				let x = EventBuffer::Enter(event_buffer);
-				sender.send(x).unwrap();
-			})
-			.lost_cb(lost_event_handler)
-			.build().unwrap();
+		let perf =
+			PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_enter())
+				.sample_cb(move |_cpu: i32, bytes: &[u8]| {
+					let bytes_ptr = bytes.as_ptr();
+					let ptr = bytes_ptr as *const SyscallEventBuffer;
+					let event_buffer = unsafe { *ptr };
+					let x = EventBuffer::Enter(event_buffer);
+					sender.send(x).unwrap();
+				})
+				.lost_cb(lost_event_handler)
+				.build()
+				.unwrap();
 		thread::spawn(move || {
 			loop {
 				perf.poll(Duration::from_secs(1)).unwrap();
@@ -219,21 +225,20 @@ fn attach(target_pids: &[u32], combiner_tx: Sender<EventBuffer>) {
 
 	{
 		let sender = combiner_tx.clone();
-		let perf = PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_exit())
-			.sample_cb(move |_cpu: i32, bytes: &[u8]| {
-				println!("Got end syscalls");
-				let bytes_ptr = bytes.as_ptr();
-				let ptr = bytes_ptr as *const SyscallEventBuffer;
-				let event_buffer = unsafe { *ptr };
-				let x = EventBuffer::Exit(event_buffer);
-				sender.send(x).unwrap();
-			})
-			.lost_cb(lost_event_handler)
-			.build().unwrap();
-		thread::spawn(move || {
-			loop {
-				perf.poll(Duration::from_secs(10)).unwrap();
-			}
+		let perf =
+			PerfBufferBuilder::new(skel.maps_mut().perf_array_syscall_exit())
+				.sample_cb(move |_cpu: i32, bytes: &[u8]| {
+					let bytes_ptr = bytes.as_ptr();
+					let ptr = bytes_ptr as *const SyscallEventBuffer;
+					let event_buffer = unsafe { *ptr };
+					let x = EventBuffer::Exit(event_buffer);
+					sender.send(x).unwrap();
+				})
+				.lost_cb(lost_event_handler)
+				.build()
+				.unwrap();
+		thread::spawn(move || loop {
+			perf.poll(Duration::from_secs(10)).unwrap();
 		});
 	}
 	while !DONE.load(SeqCst) {
@@ -256,6 +261,11 @@ fn main() {
 	let args = (*ARGS).clone();
 	thread::spawn(counter);
 
+	let start_micros = SystemTime::now()
+		.duration_since(SystemTime::UNIX_EPOCH)
+		.unwrap()
+		.as_micros() as u64;
+
 	let (sink_tx, sink_rx) = unbounded();
 	let addrs = args.data_addrs.clone();
 	thread::spawn(move || {
@@ -264,7 +274,7 @@ fn main() {
 
 	let (combiner_tx, combiner_rx) = unbounded();
 	thread::spawn(move || {
-		combiner(combiner_rx, sink_tx);
+		combiner(combiner_rx, sink_tx, start_micros);
 	});
 
 	thread::spawn(move || {
@@ -273,7 +283,6 @@ fn main() {
 	});
 
 	attach(args.pids.as_slice(), combiner_tx);
-
 
 	println!("Exiting done watcher ");
 }

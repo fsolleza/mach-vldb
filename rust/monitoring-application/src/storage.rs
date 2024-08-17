@@ -445,10 +445,10 @@ impl MachReader {
 			raw_data.push((syscall_number, cpu, timestamp_micros, duration_micros));
 		}
 
-		raw_data.sort_by_key(|x| x.2);
+		raw_data.sort_by_key(|x| x.3);
 		let tile_idx = (raw_data.len() as f64 * tile) as usize;
 		let mut raw_data: Vec<_> = raw_data[tile_idx..].into();
-		raw_data.sort_by_key(|x| x.1);
+		raw_data.sort_by_key(|x| x.2);
 
 		let mut events = Vec::new();
 		for item in raw_data.iter() {

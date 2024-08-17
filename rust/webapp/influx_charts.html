@@ -59,7 +59,7 @@
 
   .charts {
     display: grid;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto;
     row-gap: 10px;
   }
 
@@ -68,6 +68,12 @@
     width: 800px;
     margin: 0px auto;
   }
+
+  #storageTitle {
+    font-size: xx-large;
+    font-weight: bold;
+  }
+
 
   </style>
 
@@ -82,20 +88,19 @@
         <div id="leftColumn" class="columnDiv">
           <p id="storageTitle"> Influx </p>
 
-          <p>
-            Data Received:
-            <span class="boldSpan" id="dataReceived">0</span>
+          <p style="font-size: large">
+            Total Input Load (Records per Second):
+            <span style="font-weight: bold" id="dataReceived">0</span>
           </p>
 
-          <p>
-            Data Completeness:
-            <span class="boldSpan" id="dataCompleteness">0</span>
+          <p style="font-size: large">
+            Dropped Input Load (% of Total Input Load):
+            <span style="font-weight: bold; color: #809f44" id="dataCompleteness">0</span>
           </p>
 
           <div class="charts">
             <div id="kvPercentileChart" class="chart"></div>
-            <div id="syscallPercentileChart" class="chart">bar</div>
-            <div id="schedulerChart" class="chart">bar</div>
+            <div id="syscallPercentileChart" class="chart"></div>
           </div>
 
         </div> <!-- leftColumn -->
@@ -140,7 +145,13 @@
 
       var update_fn = function(data) {
         //console.log(data);
-        elem.innerText = data.DataCompleteness * 100 + "%";
+        var c = 1 - data.DataCompleteness;
+        elem.innerText = c * 100 + "%";
+        if (c < 0.05) {
+          elem.style.color = "#809f44";
+        } else {
+          elem.style.color = "#b25752";
+        }
       };
 
       send_request(req, update_fn);
@@ -231,7 +242,11 @@
         var max_y = data.KvOpsPercentile.max_y;
         var roundup = roundUpY(max_y);
         console.log("kv max y", max_y, roundup);
+
+        kvPercentileAxisY.minimum = 0;
         kvPercentileAxisY.maximum = roundup;
+        kvPercentileAxisY.interval = roundup / 4;
+
 
         var l = data.KvOpsPercentile.data.length;
 
@@ -252,11 +267,21 @@
      * Chart: Read system calls
      */
 
-    var syscallPercentileData = [{
+    var syscallPercentileData = {
       type: "scatter",
-      color: "#5a80b7",
+      color: "#d38b58",
       dataPoints: []
-    }];
+    };
+
+    var schedulerData = {
+      type: "scatter",
+      color: "#b25752",
+      markerType: "square",
+      markerSize: 10,
+      dataPoints: []
+    };
+
+    var chartData = [syscallPercentileData, schedulerData];
 
     var syscallPercentileAxisX = {
       interval: 10,
@@ -270,8 +295,9 @@
     };
 
     var syscallPercentileAxisY = {}
+    var schedEventDataAxisY = {}
 
-    initChartXAxis(syscallPercentileAxisX, syscallPercentileData[0].dataPoints);
+    initChartXAxis(syscallPercentileAxisX, syscallPercentileData.dataPoints);
 
     var syscallPercentileChart = new CanvasJS.Chart("syscallPercentileChart", {
       title: {
@@ -287,7 +313,7 @@
       axisX: [syscallPercentileAxisX],
       axisY: [syscallPercentileAxisY],
 
-      data: syscallPercentileData,
+      data: chartData,
     })
 
     function updateReadSyscallsChart() {
@@ -302,13 +328,13 @@
 
       // setup new array for rendering
       var newPoints = [];
-      var oldPoints = syscallPercentileData[0].dataPoints;
+      var oldPoints = syscallPercentileData.dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
         if (oldPoints[i].x > xMin) {
           newPoints.push(oldPoints[i]);
         }
       }
-      syscallPercentileData[0].dataPoints = newPoints;
+      syscallPercentileData.dataPoints = newPoints;
 
       // setup request for the previous second of data
       var high = now - 1 * 1000000;
@@ -325,14 +351,18 @@
 
         var max_y = data.ReadSyscalls.max_y;
         var roundup = roundUpY(max_y);
+
         console.log("duration max y", max_y, roundup);
+
+        syscallPercentileAxisY.minimum = 0;
         syscallPercentileAxisY.maximum = roundup;
+        syscallPercentileAxisY.interval = roundup / 4;
 
         var l = data.ReadSyscalls.data.length;
         for (var i = 0; i < l; i++) {
           var item = data.ReadSyscalls.data[i].Syscall;
           var x = secsToDt(item.timestamp_micros / 1000000);
-          syscallPercentileData[0].dataPoints.push(
+          chartData[0].dataPoints.push(
             { x: x, y: item.duration_micros }
           );
         }
@@ -346,40 +376,6 @@
      * Chart: Scheduler events
      */
 
-    var schedulerData = [{
-      type: "scatter",
-      color: "#5a80b7",
-      dataPoints: []
-    }];
-
-    var schedulerAxisX = {
-      interval: 10,
-      intervalType: "second",
-      labelWrap: false,
-      labelTextAlign: "right",
-      labelAngle: -20,
-      titleFontSize: 14,
-      labelFontSize: 14,
-      lineColor: "#ddd",
-    };
-    initChartXAxis(schedulerAxisX, schedulerData[0].dataPoints);
-
-    var schedulerChart = new CanvasJS.Chart("schedulerChart", {
-      title: {
-        text: "Scheduler Events",
-        fontFamily: "arial",
-        fontSize: 16,
-        fontWeight: "bold",
-        backgroundColor: "#ffffff",
-      },
-
-      toolTip: { enabled: false, },
-
-      axisX: [schedulerAxisX],
-
-      data: schedulerData,
-    })
-
     function updateSchedulerChart() {
 
       var now = micros_now();
@@ -387,18 +383,18 @@
       // set x axis range
       var xMax = now / 1000000 - 1;
       var xMin = xMax - 60;
-      schedulerAxisX.minimum = secsToDt(xMin);
-      schedulerAxisX.maximum = secsToDt(xMax);
+      syscallPercentileAxisX.minimum = secsToDt(xMin);
+      syscallPercentileAxisX.maximum = secsToDt(xMax);
 
       // setup new array for rendering
       var newPoints = [];
-      var oldPoints = schedulerData[0].dataPoints;
+      var oldPoints = schedulerData.dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
         if (oldPoints[i].x > xMin) {
           newPoints.push(oldPoints[i]);
         }
       }
-      schedulerData[0].dataPoints = newPoints;
+      schedulerData.dataPoints = newPoints;
 
       // setup request for the previous second of data
       var high = now - 1 * 1000000;
@@ -416,11 +412,21 @@
         for (var i = 0; i < l; i++) {
           var item = data.Scheduler[i].Scheduler;
           var x = secsToDt(item.timestamp_micros / 1000000);
-          schedulerData[0].dataPoints.push(
+          chartData[1].dataPoints.push(
             { x: x, y: 1 }
           );
         }
-        schedulerChart.render();
+
+        // Adjust all y values for the scheduler events so that they show up in
+        // the middle of the chart
+
+        var yval = syscallPercentileAxisY.maximum / 2;
+        var l = chartData[1].dataPoints.length;
+        for (var i = 0; i < l; i++) {
+          chartData[1].dataPoints[i].y = yval;
+        }
+
+        syscallPercentileChart.render();
       };
       send_request(req, update_fn);
     }
@@ -464,28 +470,33 @@
      * 100us, 1000us, 10000us
      */
     function roundUpY(x) {
-      if (x < 10) {
-        return 10;
-      }
-
-      else if (x < 100) {
-        return x - x % 10 + 20;
+      if (x < 100) {
+        return 100;
       }
 
       else if (x < 1000) {
-        return x - x % 100 + 200;
+
+        var remainder = x % 100;
+        var increment = remainder - remainder % 10 + 20;
+        return x - remainder + increment;
       }
 
       else if (x < 10000) {
-        return x - x % 1000 + 2000;
+        var remainder = x % 1000;
+        var increment = remainder - remainder % 100 + 200;
+        return x - remainder + increment;
       }
 
       else if (x < 100000) {
-        return x - x % 10000 + 20000;
+        var remainder = x % 10000;
+        var increment = remainder - remainder % 1000 + 2000;
+        return x - remainder + increment;
       }
 
       else if (x < 1000000) {
-        return x - x % 100000 + 200000;
+        var remainder = x % 100000;
+        var increment = remainder - remainder % 10000 + 20000;
+        return x - remainder + increment;
       }
 
       else {
@@ -498,7 +509,6 @@
      */
     syscallPercentileChart.render();
     kvPercentileChart.render();
-    schedulerChart.render();
     function updateData() {
       updateDataReceived();
       updateCompleteness();

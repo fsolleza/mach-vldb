@@ -5,12 +5,13 @@ use std::path::PathBuf;
 const SRC: &str = "src/bpf/syscall_latency.bpf.c";
 
 fn main() {
-    let mut out =
-        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
-    out.push("syscall_latency.skel.rs");
-    SkeletonBuilder::new()
-        .source(SRC)
-        .build_and_generate(&out)
-        .unwrap();
-    println!("cargo:rerun-if-changed={SRC}");
+	let mut out = PathBuf::from(
+		env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"),
+	);
+	out.push("syscall_latency.skel.rs");
+	SkeletonBuilder::new()
+		.source(SRC)
+		.build_and_generate(&out)
+		.unwrap();
+	println!("cargo:rerun-if-changed={SRC}");
 }

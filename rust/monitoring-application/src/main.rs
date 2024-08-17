@@ -20,6 +20,10 @@ static TOTAL_RECEIVED: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_DROPPED: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_WRITTEN: AtomicUsize = AtomicUsize::new(0);
 
+static LAST_SECOND_RECEIVED: AtomicUsize = AtomicUsize::new(0);
+static LAST_SECOND_WRITTEN: AtomicUsize = AtomicUsize::new(0);
+static LAST_SECOND_DROPPED: AtomicUsize = AtomicUsize::new(0);
+
 static RECEIVED: AtomicUsize = AtomicUsize::new(0);
 static WRITTEN: AtomicUsize = AtomicUsize::new(0);
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -29,6 +33,10 @@ fn stat_counter() {
 		let r = RECEIVED.swap(0, SeqCst);
 		let d = DROPPED.swap(0, SeqCst);
 		let w = WRITTEN.swap(0, SeqCst);
+
+		LAST_SECOND_RECEIVED.swap(r, SeqCst);
+		LAST_SECOND_WRITTEN.swap(w, SeqCst);
+		LAST_SECOND_DROPPED.swap(d, SeqCst);
 
 		TOTAL_RECEIVED.fetch_add(r, SeqCst);
 		TOTAL_DROPPED.fetch_add(d, SeqCst);
@@ -129,11 +137,11 @@ fn handle_query<R: Reader>(args: Args, mut stream: TcpStream, reader: R) {
 	 */
 	let response = match request {
 		Request::DataReceived => {
-			Response::DataReceived(TOTAL_RECEIVED.load(SeqCst) as u64)
+			Response::DataReceived(LAST_SECOND_RECEIVED.load(SeqCst) as u64)
 		}
 		Request::DataCompleteness => {
-			let received = TOTAL_RECEIVED.load(SeqCst) as f64;
-			let written = TOTAL_WRITTEN.load(SeqCst) as f64;
+			let received = LAST_SECOND_RECEIVED.load(SeqCst) as f64;
+			let written = LAST_SECOND_WRITTEN.load(SeqCst) as f64;
 			let completeness = written / received;
 			Response::DataCompleteness(completeness)
 		}
