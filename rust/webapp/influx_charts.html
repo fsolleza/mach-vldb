@@ -86,7 +86,7 @@
 
       <div class="bodyRow">
         <div id="leftColumn" class="columnDiv">
-          <p id="storageTitle"> Influx </p>
+          <p id="storageTitle"> InfluxDB </p>
 
           <p style="font-size: large">
             Total Input Load (Records per Second):
@@ -96,6 +96,16 @@
           <p style="font-size: large">
             Dropped Input Load (% of Total Input Load):
             <span style="font-weight: bold; color: #809f44" id="dataCompleteness">0</span>
+          </p>
+
+          <p style="font-size: large">
+            <input type="checkbox" id="enableSystemCalls" name="enableSystemCalls">
+            <label for="enableSystemCalls">Enable Read System Calls</label>
+          </p>
+
+          <p style="font-size: large">
+            <input type="checkbox" id="enableScheduler" name="enableScheduler">
+            <label for="enableScheduler">Enable Scheduler Events</label><br>
           </p>
 
           <div class="charts">
@@ -179,15 +189,14 @@
 
     var kvPercentileAxisY = {}
 
-    function initChartXAxis(xAxis, data) {
-      var xMax = NOW / 1000000 - 1;
+    function initChartXAxis(xMax, xAxis, data) {
       var xMin = xMax - 60;
       xAxis.minimum = secsToDt(xMin);
       xAxis.maximum = secsToDt(xMax);
       data.push({x: xAxis.minimum, y: null});
     }
 
-    initChartXAxis(kvPercentileAxisX, kvPercentileData[0].dataPoints);
+    initChartXAxis(seconds_now() - 1, kvPercentileAxisX, kvPercentileData[0].dataPoints);
 
     var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", {
       title: {
@@ -273,6 +282,12 @@
       dataPoints: []
     };
 
+    var syscallPercentileDataFiller = {
+      type: "scatter",
+      color: "#d38b58",
+      dataPoints: []
+    };
+
     var schedulerData = {
       type: "scatter",
       color: "#b25752",
@@ -280,8 +295,6 @@
       markerSize: 10,
       dataPoints: []
     };
-
-    var chartData = [syscallPercentileData, schedulerData];
 
     var syscallPercentileAxisX = {
       interval: 10,
@@ -297,9 +310,7 @@
     var syscallPercentileAxisY = {}
     var schedEventDataAxisY = {}
 
-    initChartXAxis(syscallPercentileAxisX, syscallPercentileData.dataPoints);
-
-    var syscallPercentileChart = new CanvasJS.Chart("syscallPercentileChart", {
+    var syscallPercentileChartObject = {
       title: {
         text: "Read Syscall Latency in ms (>" + (TILE * 100) + "th \%ile)",
         fontFamily: "arial",
@@ -313,8 +324,41 @@
       axisX: [syscallPercentileAxisX],
       axisY: [syscallPercentileAxisY],
 
-      data: chartData,
-    })
+      data: [syscallPercentileData, schedulerData],
+    };
+
+    initChartXAxis(seconds_now() - 1, syscallPercentileAxisX, syscallPercentileData.dataPoints);
+
+    var syscallPercentileChart = new CanvasJS.Chart(
+      "syscallPercentileChart",
+      syscallPercentileChartObject
+    );
+
+    function renderSyscallPercentileChart() {
+
+        var enableSyscall = document.getElementById("enableSystemCalls");
+        var enableScheduler = document.getElementById("enableScheduler");
+
+        var newData = [];
+
+        if (enableSyscall.checked) {
+          newData.push(syscallPercentileData);
+        } else {
+          initChartXAxis(
+            seconds_now() - 1,
+            syscallPercentileAxisX,
+            syscallPercentileDataFiller.dataPoints
+          );
+          newData.push(syscallPercentileDataFiller);
+        }
+
+        if (enableScheduler.checked) {
+          newData.push(schedulerData);
+        }
+
+        syscallPercentileChartObject.data = newData;
+        syscallPercentileChart.render();
+    }
 
     function updateReadSyscallsChart() {
 
@@ -362,11 +406,12 @@
         for (var i = 0; i < l; i++) {
           var item = data.ReadSyscalls.data[i].Syscall;
           var x = secsToDt(item.timestamp_micros / 1000000);
-          chartData[0].dataPoints.push(
+          syscallPercentileData.dataPoints.push(
             { x: x, y: item.duration_micros }
           );
         }
-        syscallPercentileChart.render();
+
+        renderSyscallPercentileChart();
       };
 
       send_request(req, update_fn);
@@ -412,7 +457,7 @@
         for (var i = 0; i < l; i++) {
           var item = data.Scheduler[i].Scheduler;
           var x = secsToDt(item.timestamp_micros / 1000000);
-          chartData[1].dataPoints.push(
+          schedulerData.dataPoints.push(
             { x: x, y: 1 }
           );
         }
@@ -421,12 +466,12 @@
         // the middle of the chart
 
         var yval = syscallPercentileAxisY.maximum / 2;
-        var l = chartData[1].dataPoints.length;
+        var l = schedulerData.dataPoints.length;
         for (var i = 0; i < l; i++) {
-          chartData[1].dataPoints[i].y = yval;
+          schedulerData.dataPoints[i].y = yval;
         }
 
-        syscallPercentileChart.render();
+        renderSyscallPercentileChart();
       };
       send_request(req, update_fn);
     }
@@ -452,8 +497,13 @@
      * Helper functions to get microseconds now
      */
     function micros_now() {
-      var nowSecs = Math.floor(Date.now() / 1000);
+      var nowSecs = seconds_now();
       return nowSecs * 1000000;
+    }
+
+    function seconds_now() {
+      var nowSecs = Math.floor(Date.now() / 1000);
+      return nowSecs;
     }
 
     /*
