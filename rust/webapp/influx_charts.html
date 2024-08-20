@@ -98,16 +98,6 @@
             <span style="font-weight: bold; color: #809f44" id="dataCompleteness">0</span>
           </p>
 
-          <p style="font-size: large">
-            <input type="checkbox" id="enableSystemCalls" name="enableSystemCalls">
-            <label for="enableSystemCalls">Enable Read System Calls</label>
-          </p>
-
-          <p style="font-size: large">
-            <input type="checkbox" id="enableScheduler" name="enableScheduler">
-            <label for="enableScheduler">Enable Scheduler Events</label><br>
-          </p>
-
           <div class="charts">
             <div id="kvPercentileChart" class="chart"></div>
             <div id="syscallPercentileChart" class="chart"></div>
@@ -187,7 +177,11 @@
       lineColor: "#ddd",
     };
 
-    var kvPercentileAxisY = {}
+    var kvPercentileAxisY = {
+      title: "Latency (ms)",
+      fontFamily: "arial",
+      titleFontSize: 16,
+    }
 
     function initChartXAxis(xMax, xAxis, data) {
       var xMin = xMax - 60;
@@ -200,7 +194,7 @@
 
     var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", {
       title: {
-        text: "Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        text: "RocksDB KV Read Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
@@ -278,7 +272,9 @@
 
     var syscallPercentileData = {
       type: "scatter",
+      showInLegend: true,
       color: "#d38b58",
+      legendText: "Read System Call Latency",
       dataPoints: []
     };
 
@@ -290,7 +286,9 @@
 
     var schedulerData = {
       type: "scatter",
-      color: "#b25752",
+      showInLegend: true,
+      legendText: "Scheduler Event Occurrence",
+      color: "#a1ba65",
       markerType: "square",
       markerSize: 10,
       dataPoints: []
@@ -302,21 +300,31 @@
       labelWrap: false,
       labelTextAlign: "right",
       labelAngle: -20,
-      titleFontSize: 14,
       labelFontSize: 14,
       lineColor: "#ddd",
     };
 
-    var syscallPercentileAxisY = {}
+    var syscallPercentileAxisY = {
+      title: "Latency (ms)",
+      fontFamily: "arial",
+      titleFontSize: 16,
+    }
     var schedEventDataAxisY = {}
 
     var syscallPercentileChartObject = {
       title: {
-        text: "Read Syscall Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        text: "Read System Call Latency in ms (>" + (TILE * 100) + "th \%ile)",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
         backgroundColor: "#ffffff",
+      },
+
+      legend: {
+        horizontalAlign: "center", // "center" , "right"
+        verticalAlign: "bottom",  // "top" , "bottom"
+        fontFamily: "arial",
+        fontSize: 16,
       },
 
       toolTip: { enabled: false, },
@@ -328,20 +336,26 @@
     };
 
     initChartXAxis(seconds_now() - 1, syscallPercentileAxisX, syscallPercentileData.dataPoints);
+    initChartXAxis(seconds_now() - 1, syscallPercentileAxisX, schedulerData.dataPoints);
 
     var syscallPercentileChart = new CanvasJS.Chart(
       "syscallPercentileChart",
       syscallPercentileChartObject
     );
 
-    function renderSyscallPercentileChart() {
+    var ENABLED = {}
+    window.onmessage = function(e) {
+      ENABLED=e.data;
+      console.log("In iframe child", ENABLED);
+    };
 
-        var enableSyscall = document.getElementById("enableSystemCalls");
-        var enableScheduler = document.getElementById("enableScheduler");
+    function renderSyscallPercentileChart() {
+        var enableSyscall = ENABLED.syscalls;
+        var enableScheduler = ENABLED.scheduler;
 
         var newData = [];
 
-        if (enableSyscall.checked) {
+        if (enableSyscall) {
           newData.push(syscallPercentileData);
         } else {
           initChartXAxis(
@@ -352,7 +366,7 @@
           newData.push(syscallPercentileDataFiller);
         }
 
-        if (enableScheduler.checked) {
+        if (enableScheduler) {
           newData.push(schedulerData);
         }
 

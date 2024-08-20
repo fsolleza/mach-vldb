@@ -35,7 +35,7 @@
       .mainDiv {
         margin: auto;
         display: grid;
-        grid-template-rows: auto 200px;
+        grid-template-rows: auto auto 200px;
         row-gap: 10px;
       }
 
@@ -60,13 +60,13 @@
       }
 
       .chartFrame {
-        height: 750px;
+        height: 900px;
         width: 850px;
         border:none;
       }
 
       .controlRow {
-        height: 50px;
+        height: auto;
       }
 
       .controlRowContainer {
@@ -135,17 +135,39 @@
             </span>
           </div>
         </div>
+
+
       </div> <!-- controlRow -->
+
+      <div class="controlRow">
+        <p style="font-size: large">
+          <input
+            type="checkbox"
+            id="enableSystemCalls"
+            name="enableSystemCalls"
+            onclick="sendIframeMessage()">
+          <label for="enableSystemCalls">Enable Read System Calls</label>
+        </p>
+
+        <p style="font-size: large">
+          <input
+            type="checkbox"
+            id="enableScheduler"
+            name="enableScheduler"
+            onclick="sendIframeMessage()">
+          <label for="enableScheduler">Enable Scheduler Events</label><br>
+        </p>
+      </div> <!-- dataToggles -->
 
       <div class="chartsRow">
 
         <div>
-          <iframe src="influx" class="chartFrame">
+          <iframe src="influx" class="chartFrame" id="influxIframe">
           </iframe>
         </div>
 
         <div>
-          <iframe src="mach" class="chartFrame">
+          <iframe src="mach" class="chartFrame" id="machIframe">
           </iframe>
         </div>
 
@@ -198,6 +220,25 @@
       };
 
       send_request(req, update_fn);
+    }
+
+    /*
+     * Send message to iframes
+     */
+    function sendIframeMessage() {
+      var enableSyscalls = document.getElementById("enableSystemCalls").checked;
+      var enableScheduler = document.getElementById("enableScheduler").checked;
+
+      var enabled = {
+        syscalls: enableSyscalls,
+        scheduler: enableScheduler,
+      };
+
+      const iframe = document.getElementById('machIframe');
+      iframe.contentWindow.postMessage(enabled, '*');
+
+      const iframe = document.getElementById('influxIframe');
+      iframe.contentWindow.postMessage(enabled, '*');
     }
 
     /*
