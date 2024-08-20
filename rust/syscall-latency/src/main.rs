@@ -147,20 +147,23 @@ fn combiner(rx: Receiver<EventBuffer>, tx: Sender<Vec<Record>>, program_start_mi
 						(key.0, key.1, key.2, cnt)
 					};
 
-					if let Some((cpu, start)) = entry_events.remove(&key) {
+					if let Some((cpu, start)) = entry_events.get(&key) {
 						let start_ts_micros = start / 1000;
 						let end_ts_micros = event.timestamp / 1000;
 
-						let duration_micros = end_ts_micros - start_ts_micros;
-						let timestamp_micros = program_start_micros + start_ts_micros;
+						if end_ts_micros > start_ts_micros {
+							let duration_micros = end_ts_micros - start_ts_micros;
+							let timestamp_micros = program_start_micros + start_ts_micros;
 
-						let x = Record::Syscall {
-							timestamp_micros,
-							duration_micros,
-							cpu,
-							syscall_number: event.syscall_number,
-						};
-						durations.push(x);
+							let x = Record::Syscall {
+								timestamp_micros,
+								duration_micros,
+								cpu: *cpu,
+								syscall_number: event.syscall_number,
+							};
+							durations.push(x);
+							entry_events.remove(&key).unwrap();
+						}
 					}
 				}
 				tx.send(durations).unwrap();

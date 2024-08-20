@@ -160,11 +160,17 @@
     /*
      * Chart: KvOp Latency
      */
-    var kvPercentileData = [{
+    var kvPercentileData = {
       type: "scatter",
       color: "#5a80b7",
       dataPoints: []
-    }];
+    };
+
+    var kvPercentileDataFiller = {
+      type: "scatter",
+      color: "#5a80b7",
+      dataPoints: []
+    };
 
     var kvPercentileAxisX = {
       interval: 10,
@@ -190,9 +196,9 @@
       data.push({x: xAxis.minimum, y: null});
     }
 
-    initChartXAxis(seconds_now() - 1, kvPercentileAxisX, kvPercentileData[0].dataPoints);
+    initChartXAxis(seconds_now() - 1, kvPercentileAxisX, kvPercentileData.dataPoints);
 
-    var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", {
+    var kvPercentileChartObject = {
       title: {
         text: "RocksDB KV Read Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
         fontFamily: "arial",
@@ -206,8 +212,31 @@
       axisX: [kvPercentileAxisX],
       axisY: [kvPercentileAxisY],
 
-      data: kvPercentileData,
-    })
+      data: [kvPercentileData],
+    };
+
+    var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", kvPercentileChartObject);
+
+    function renderKvPercentileChart() {
+        var enabled = ENABLED.kvops;
+
+        var newData = [];
+
+        if (enabled) {
+          newData.push(kvPercentileData);
+        } else {
+          initChartXAxis(
+            seconds_now() - 1,
+            kvPercentileAxisX,
+            kvPercentileDataFiller.dataPoints
+          );
+          newData.push(kvPercentileDataFiller);
+        }
+
+        kvPercentileChartObject.data = newData;
+        kvPercentileChart.render();
+    }
+
 
     function updateKvPercentileChart() {
 
@@ -221,13 +250,13 @@
 
       // setup new array for rendering
       var newPoints = [];
-      var oldPoints = kvPercentileData[0].dataPoints;
+      var oldPoints = kvPercentileData.dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
         if (oldPoints[i].x > xMin) {
           newPoints.push(oldPoints[i]);
         }
       }
-      kvPercentileData[0].dataPoints = newPoints;
+      kvPercentileData.dataPoints = newPoints;
 
       // setup request for the previous second of data
       var high = now - 1 * 1000000;
@@ -256,11 +285,12 @@
         for (var i = 0; i < l; i++) {
           var item = data.KvOpsPercentile.data[i].KVOp;
           var x = secsToDt(item.timestamp_micros / 1000000);
-          kvPercentileData[0].dataPoints.push(
+          kvPercentileData.dataPoints.push(
             { x: x, y: item.duration_micros }
           );
         }
-        kvPercentileChart.render();
+
+        renderKvPercentileChart();
       };
 
       send_request(req, update_fn);
@@ -273,14 +303,14 @@
     var syscallPercentileData = {
       type: "scatter",
       showInLegend: true,
-      color: "#d38b58",
+      color: "#a1ba65",
       legendText: "Read System Call Latency",
       dataPoints: []
     };
 
     var syscallPercentileDataFiller = {
       type: "scatter",
-      color: "#d38b58",
+      color: "#a1ba65",
       dataPoints: []
     };
 
@@ -288,7 +318,7 @@
       type: "scatter",
       showInLegend: true,
       legendText: "Scheduler Event Occurrence",
-      color: "#a1ba65",
+      color: "#b15751",
       markerType: "square",
       markerSize: 10,
       dataPoints: []

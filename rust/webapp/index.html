@@ -143,6 +143,15 @@
         <p style="font-size: large">
           <input
             type="checkbox"
+            id="enableKvOps"
+            name="enableKvOps"
+            onclick="sendIframeMessage()">
+          <label for="enableKvOps">Enable RocksDB Read Latency</label>
+        </p>
+
+        <p style="font-size: large">
+          <input
+            type="checkbox"
             id="enableSystemCalls"
             name="enableSystemCalls"
             onclick="sendIframeMessage()">
@@ -162,12 +171,12 @@
       <div class="chartsRow">
 
         <div>
-          <iframe src="influx" class="chartFrame" id="influxIframe">
+          <iframe src="mach" class="chartFrame" id="machIframe">
           </iframe>
         </div>
 
         <div>
-          <iframe src="mach" class="chartFrame" id="machIframe">
+          <iframe src="influx" class="chartFrame" id="influxIframe">
           </iframe>
         </div>
 
@@ -228,17 +237,19 @@
     function sendIframeMessage() {
       var enableSyscalls = document.getElementById("enableSystemCalls").checked;
       var enableScheduler = document.getElementById("enableScheduler").checked;
+      var enableKvOps = document.getElementById("enableKvOps").checked;
 
       var enabled = {
         syscalls: enableSyscalls,
         scheduler: enableScheduler,
+        kvops: enableKvOps,
       };
 
-      const iframe = document.getElementById('machIframe');
-      iframe.contentWindow.postMessage(enabled, '*');
+      const machIframe = document.getElementById('machIframe');
+      machIframe.contentWindow.postMessage(enabled, '*');
 
-      const iframe = document.getElementById('influxIframe');
-      iframe.contentWindow.postMessage(enabled, '*');
+      const influxIframe = document.getElementById('influxIframe');
+      influxIframe.contentWindow.postMessage(enabled, '*');
     }
 
     /*
