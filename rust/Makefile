@@ -86,6 +86,18 @@ sane-terminal:
 ## RUN TARGETS ##
 #################
 
+.PHONY: tmux-application
+tmux-application:
+	tmux new-session -d 'make application' \; \
+	split-window -h -d 'echo Running syscall-latency BPF program; sleep 5; make syscall-latency' \; \
+	split-window -v -d 'tail -f tmp/log-webapp' \; \
+	select-pane -t 2 \; \
+	split-window -v -d 'tail -f tmp/log-monitoring-application-mach' \; \
+	split-window -h -d 'echo Running scheduler-events BPF program; sleep 5; make scheduler-events' \; \
+	select-pane -t 4 \; \
+	split-window -h -d 'tail -f tmp/log-monitoring-application-influx' \; \
+	attach
+
 .PHONY: application
 application: \
 	stop \
@@ -96,6 +108,8 @@ application: \
 	webapp \
 	matrix-multiply \
 	sane-terminal
+	$(pprint) "Running application; Sleeping in this terminal"
+	while true; do sleep 10; done;
 
 .PHONY: webapp
 webapp: tmp-dir
