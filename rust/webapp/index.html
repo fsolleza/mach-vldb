@@ -99,7 +99,7 @@
         <div class="controlRowContainer">
           <div class="controlRowContainerItem">
           <span style="font-size: large; font-weight: bold">
-            <b>Application Request Rate (Per Second): </b>
+            <b>RocksDB Request Rate (Per Second): </b>
           </span>
           </div>
         </div>
@@ -131,7 +131,7 @@
         <div class="controlRowContainer">
           <div class="controlRowContainerItem">
             <span style="font-size: large; font-weight: bold">
-            Measured Query Rate:&nbsp <span class="boldSpan" id="kvOpsPerSec">0</span>
+            Measured Request Rate:&nbsp <span class="boldSpan" id="kvOpsPerSec">0</span>
             </span>
           </div>
         </div>
@@ -140,32 +140,41 @@
       </div> <!-- controlRow -->
 
       <div class="controlRow">
-        <p style="font-size: large">
-          <input
-            type="checkbox"
-            id="enableKvOps"
-            name="enableKvOps"
-            onclick="sendIframeMessage()">
-          <label for="enableKvOps">Enable RocksDB Read Latency</label>
-        </p>
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <span style="font-size: large">
+              <input
+                type="checkbox"
+                id="enableKvOps"
+                name="enableKvOps">
+              <label for="enableKvOps">Enable RocksDB Request Latency</label>
+            </span>
+          </div>
+        </div>
 
-        <p style="font-size: large">
-          <input
-            type="checkbox"
-            id="enableSystemCalls"
-            name="enableSystemCalls"
-            onclick="sendIframeMessage()">
-          <label for="enableSystemCalls">Enable Read System Calls</label>
-        </p>
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <span style="font-size: large">
+              <input
+                type="checkbox"
+                id="enableSystemCalls"
+                name="enableSystemCalls">
+              <label for="enableSystemCalls">Enable Read System Calls</label>
+            </span>
+          </div>
+        </div>
 
-        <p style="font-size: large">
-          <input
-            type="checkbox"
-            id="enableScheduler"
-            name="enableScheduler"
-            onclick="sendIframeMessage()">
-          <label for="enableScheduler">Enable Scheduler Events</label><br>
-        </p>
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <span style="font-size: large">
+              <input
+                type="checkbox"
+                id="enableScheduler"
+                name="enableScheduler">
+              <label for="enableScheduler">Enable Scheduler Events</label><br>
+            </span>
+          </div>
+        </div>
       </div> <!-- dataToggles -->
 
       <div class="chartsRow">
@@ -231,26 +240,86 @@
       send_request(req, update_fn);
     }
 
-    /*
-     * Send message to iframes
-     */
-    function sendIframeMessage() {
+
+    var PAGE_STATE = {
+        syscalls: false,
+        scheduler: false,
+        kvops: false,
+        mach_kv_max: 0,
+        mach_syscall_max: 0,
+        influx_kv_max: 0,
+        influx_syscall_max: 0,
+        kv_max: 0,
+        syscall_max: 0,
+    };
+
+    function sendPageState() {
       var enableSyscalls = document.getElementById("enableSystemCalls").checked;
       var enableScheduler = document.getElementById("enableScheduler").checked;
       var enableKvOps = document.getElementById("enableKvOps").checked;
 
-      var enabled = {
-        syscalls: enableSyscalls,
-        scheduler: enableScheduler,
-        kvops: enableKvOps,
-      };
+      PAGE_STATE.syscalls = enableSyscalls;
+      PAGE_STATE.scheduler = enableScheduler;
+      PAGE_STATE.kvops = enableKvOps;
+
+      PAGE_STATE.kv_max = PAGE_STATE.mach_kv_max;
+      if (PAGE_STATE.kv_max < PAGE_STATE.influx_kv_max) {
+        PAGE_STATE.kv_max = PAGE_STATE.influx_kv_max;
+      }
+
+      PAGE_STATE.syscall_max = PAGE_STATE.mach_syscall_max;
+      if (PAGE_STATE.syscall_max < PAGE_STATE.influx_syscall_max) {
+        PAGE_STATE.syscall_max = PAGE_STATE.influx_syscall_max;
+      }
+
 
       const machIframe = document.getElementById('machIframe');
-      machIframe.contentWindow.postMessage(enabled, '*');
+      machIframe.contentWindow.postMessage(PAGE_STATE, '*');
 
       const influxIframe = document.getElementById('influxIframe');
-      influxIframe.contentWindow.postMessage(enabled, '*');
+      influxIframe.contentWindow.postMessage(PAGE_STATE, '*');
     }
+
+    window.onmessage = function(e) {
+      if (e.data.mach_kv_max > 0) {
+        PAGE_STATE.mach_kv_max = e.data.mach_kv_max;
+      }
+
+      if (e.data.influx_kv_max > 0) {
+        PAGE_STATE.influx_kv_max = e.data.influx_kv_max;
+      }
+
+      if (e.data.influx_syscall_max > 0) {
+        PAGE_STATE.influx_syscall_max = e.data.influx_syscall_max;
+      }
+
+      if (e.data.mach_syscall_max > 0) {
+        PAGE_STATE.mach_syscall_max = e.data.mach_syscall_max;
+      }
+
+      console.log("page state", PAGE_STATE);
+    };
+
+    ///*
+    // * Send message to iframes
+    // */
+    //function sendIframeMessage() {
+    //  var enableSyscalls = document.getElementById("enableSystemCalls").checked;
+    //  var enableScheduler = document.getElementById("enableScheduler").checked;
+    //  var enableKvOps = document.getElementById("enableKvOps").checked;
+
+    //  var enabled = {
+    //    syscalls: enableSyscalls,
+    //    scheduler: enableScheduler,
+    //    kvops: enableKvOps,
+    //  };
+
+    //  const machIframe = document.getElementById('machIframe');
+    //  machIframe.contentWindow.postMessage(enabled, '*');
+
+    //  const influxIframe = document.getElementById('influxIframe');
+    //  influxIframe.contentWindow.postMessage(enabled, '*');
+    //}
 
     /*
      * Helper function to send request and call func when request completes
@@ -292,6 +361,7 @@
     function updateData() {
       updateQps();
       updateKvOpsPerSec();
+      sendPageState();
     }
     setInterval(updateData, 1000);
 

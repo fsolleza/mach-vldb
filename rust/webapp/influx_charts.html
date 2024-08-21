@@ -94,7 +94,7 @@
           </p>
 
           <p style="font-size: large">
-            Dropped Input Load (% of Total Input Load):
+            Dropped Records (% of Total Input Load):
             <span style="font-weight: bold; color: #809f44" id="dataCompleteness">0</span>
           </p>
 
@@ -115,6 +115,15 @@
     var TILE = 0.999;
     var NOW = micros_now();
     var STORAGE = "Influx";
+
+    var PAGE_STATE = {
+        syscalls: false,
+        scheduler: false,
+        kvops: false,
+        kv_max: 0,
+        syscall_max: 0,
+    };
+
     var elem = document.getElementById("dataReceived");
     elem.innerText = STORAGE;
 
@@ -200,7 +209,7 @@
 
     var kvPercentileChartObject = {
       title: {
-        text: "RocksDB KV Read Operation Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        text: "RocksDB Request Latency in ms (>" + (TILE * 100) + "th \%ile)",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
@@ -218,11 +227,11 @@
     var kvPercentileChart = new CanvasJS.Chart("kvPercentileChart", kvPercentileChartObject);
 
     function renderKvPercentileChart() {
-        var enabled = ENABLED.kvops;
+        var enabled = PAGE_STATE.kvops;
 
         var newData = [];
 
-        if (enabled) {
+        if (enabled && kvPercentileData.dataPoints.length > 0) {
           newData.push(kvPercentileData);
         } else {
           initChartXAxis(
@@ -236,7 +245,6 @@
         kvPercentileChartObject.data = newData;
         kvPercentileChart.render();
     }
-
 
     function updateKvPercentileChart() {
 
@@ -252,7 +260,7 @@
       var newPoints = [];
       var oldPoints = kvPercentileData.dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
-        if (oldPoints[i].x > xMin) {
+        if (oldPoints[i].x > kvPercentileAxisX.minimum) {
           newPoints.push(oldPoints[i]);
         }
       }
@@ -271,24 +279,34 @@
       var update_fn = function(data) {
         //console.log(data["KvOpsPercentile"][0]);
 
-        var max_y = data.KvOpsPercentile.max_y;
-        var roundup = roundUpY(max_y);
-        console.log("kv max y", max_y, roundup);
-
-        kvPercentileAxisY.minimum = 0;
-        kvPercentileAxisY.maximum = roundup;
-        kvPercentileAxisY.interval = roundup / 4;
-
-
         var l = data.KvOpsPercentile.data.length;
 
         for (var i = 0; i < l; i++) {
           var item = data.KvOpsPercentile.data[i].KVOp;
           var x = secsToDt(item.timestamp_micros / 1000000);
           kvPercentileData.dataPoints.push(
-            { x: x, y: item.duration_micros }
+            { x: x, y: item.duration_micros / 10 }
           );
         }
+
+        var max_y = 0;
+        for (var i = 0; i < kvPercentileData.dataPoints.length; i++) {
+          var val = kvPercentileData.dataPoints[i].y;
+          if (val > max_y) {
+            max_y = val;
+          }
+        }
+        var roundup = roundUpY(max_y);
+        window.top.postMessage({
+          mach_syscall_max: 0,
+          mach_kv_max: 0,
+          influx_syscall_max: 0,
+          influx_kv_max: roundup,
+        }, '*')
+
+        kvPercentileAxisY.minimum = 0;
+        kvPercentileAxisY.maximum = PAGE_STATE.kv_max;
+        kvPercentileAxisY.interval = PAGE_STATE.kv_max / 4;
 
         renderKvPercentileChart();
       };
@@ -373,19 +391,17 @@
       syscallPercentileChartObject
     );
 
-    var ENABLED = {}
     window.onmessage = function(e) {
-      ENABLED=e.data;
-      console.log("In iframe child", ENABLED);
+      PAGE_STATE=e.data;
     };
 
     function renderSyscallPercentileChart() {
-        var enableSyscall = ENABLED.syscalls;
-        var enableScheduler = ENABLED.scheduler;
+        var enableSyscall = PAGE_STATE.syscalls;
+        var enableScheduler = PAGE_STATE.scheduler;
 
         var newData = [];
 
-        if (enableSyscall) {
+        if (enableSyscall && syscallPercentileData.dataPoints.length > 0) {
           newData.push(syscallPercentileData);
         } else {
           initChartXAxis(
@@ -418,7 +434,7 @@
       var newPoints = [];
       var oldPoints = syscallPercentileData.dataPoints;
       for (var i = 0; i < oldPoints.length; i++) {
-        if (oldPoints[i].x > xMin) {
+        if (oldPoints[i].x > syscallPercentileAxisX.minimum) {
           newPoints.push(oldPoints[i]);
         }
       }
@@ -437,23 +453,42 @@
       var update_fn = function(data) {
         //console.log(data["ReadSyscalls"]);
 
-        var max_y = data.ReadSyscalls.max_y;
-        var roundup = roundUpY(max_y);
+        //var max_y = data.ReadSyscalls.max_y;
+        //var roundup = roundUpY(max_y) / 100;
 
-        console.log("duration max y", max_y, roundup);
+        //console.log("duration max y", max_y, roundup);
 
-        syscallPercentileAxisY.minimum = 0;
-        syscallPercentileAxisY.maximum = roundup;
-        syscallPercentileAxisY.interval = roundup / 4;
+        //syscallPercentileAxisY.minimum = 0;
+        //syscallPercentileAxisY.maximum = roundup;
+        //syscallPercentileAxisY.interval = roundup / 4;
 
         var l = data.ReadSyscalls.data.length;
         for (var i = 0; i < l; i++) {
           var item = data.ReadSyscalls.data[i].Syscall;
           var x = secsToDt(item.timestamp_micros / 1000000);
           syscallPercentileData.dataPoints.push(
-            { x: x, y: item.duration_micros }
+            { x: x, y: item.duration_micros / 100 }
           );
         }
+
+        var max_y = 0;
+        for (var i = 0; i < syscallPercentileData.dataPoints.length; i++) {
+          var val = syscallPercentileData.dataPoints[i].y;
+          if (val > max_y) {
+            max_y = val;
+          }
+        }
+        var roundup = roundUpY(max_y);
+        window.top.postMessage({
+          mach_syscall_max: 0,
+          mach_kv_max: 0,
+          influx_syscall_max: roundup,
+          influx_kv_max: 0,
+        }, '*')
+
+        syscallPercentileAxisY.minimum = 0;
+        syscallPercentileAxisY.maximum = PAGE_STATE.syscall_max;
+        syscallPercentileAxisY.interval = PAGE_STATE.syscall_max / 4;
 
         renderSyscallPercentileChart();
       };
@@ -564,8 +599,22 @@
      * 100us, 1000us, 10000us
      */
     function roundUpY(x) {
-      if (x < 100) {
-        return 100;
+      if (x < 1) {
+        var remainder = x % 0.1;
+        var increment = remainder - remainder % 0.01 + 0.02;
+        return x - remainder + increment;
+      }
+
+      else if (x < 10) {
+        var remainder = x % 1;
+        var increment = remainder - remainder % 0.1 + 0.2;
+        return x - remainder + increment;
+      }
+
+      else if (x < 100) {
+        var remainder = x % 10;
+        var increment = remainder - remainder % 1 + 2;
+        return x - remainder + increment;
       }
 
       else if (x < 1000) {
