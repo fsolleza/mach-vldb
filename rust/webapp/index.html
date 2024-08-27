@@ -145,9 +145,22 @@
             <span style="font-size: large">
               <input
                 type="checkbox"
+                id="pauseBox"
+                name="pauseBox"
+                checked>
+              <label for="pauseBox">Pause graphs  |</label>
+            </span>
+          </div>
+        </div>
+
+        <div class="controlRowContainer">
+          <div class="controlRowContainerItem">
+            <span style="font-size: large">
+              <input
+                type="checkbox"
                 id="enableKvOps"
                 name="enableKvOps">
-              <label for="enableKvOps">Enable RocksDB Request Latency</label>
+              <label for="enableKvOps">Enable RocksDB Request Latency  |</label>
             </span>
           </div>
         </div>
@@ -159,7 +172,7 @@
                 type="checkbox"
                 id="enableSystemCalls"
                 name="enableSystemCalls">
-              <label for="enableSystemCalls">Enable Read System Calls</label>
+              <label for="enableSystemCalls">Enable Read System Calls  |</label>
             </span>
           </div>
         </div>
@@ -171,7 +184,7 @@
                 type="checkbox"
                 id="enableScheduler"
                 name="enableScheduler">
-              <label for="enableScheduler">Enable Scheduler Events</label><br>
+              <label for="enableScheduler">Enable Scheduler Events  |</label><br>
             </span>
           </div>
         </div>
@@ -242,6 +255,7 @@
 
 
     var PAGE_STATE = {
+        pause: true,
         syscalls: false,
         scheduler: false,
         kvops: false,
@@ -254,10 +268,12 @@
     };
 
     function sendPageState() {
+      var pause = document.getElementById("pauseBox").checked;
       var enableSyscalls = document.getElementById("enableSystemCalls").checked;
       var enableScheduler = document.getElementById("enableScheduler").checked;
       var enableKvOps = document.getElementById("enableKvOps").checked;
 
+      PAGE_STATE.pause = pause;
       PAGE_STATE.syscalls = enableSyscalls;
       PAGE_STATE.scheduler = enableScheduler;
       PAGE_STATE.kvops = enableKvOps;

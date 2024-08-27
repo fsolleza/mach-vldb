@@ -112,11 +112,12 @@
     /*
      * Parameters
      */
-    var TILE = 0.999;
+    var TILE = 0.99999;
     var NOW = micros_now();
     var STORAGE = "Influx";
 
     var PAGE_STATE = {
+        pause: false,
         syscalls: false,
         scheduler: false,
         kvops: false,
@@ -155,7 +156,7 @@
       var update_fn = function(data) {
         //console.log(data);
         var c = 1 - data.DataCompleteness;
-        elem.innerText = c * 100 + "%";
+        elem.innerText = Number((c * 100).toFixed(2)) + "%";
         if (c < 0.05) {
           elem.style.color = "#809f44";
         } else {
@@ -196,6 +197,7 @@
       title: "Latency (ms)",
       fontFamily: "arial",
       titleFontSize: 16,
+      labelFontSize: 16,
     }
 
     function initChartXAxis(xMax, xAxis, data) {
@@ -209,7 +211,7 @@
 
     var kvPercentileChartObject = {
       title: {
-        text: "RocksDB Request Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        text: "RocksDB Request Latency in ms (>" + Number((TILE * 100).toFixed(5)) + "th \%ile)",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
@@ -297,12 +299,21 @@
           }
         }
         var roundup = roundUpY(max_y);
-        window.top.postMessage({
-          mach_syscall_max: 0,
-          mach_kv_max: 0,
-          influx_syscall_max: 0,
-          influx_kv_max: roundup,
-        }, '*')
+        if (STORAGE == "Mach") {
+          window.top.postMessage({
+            mach_syscall_max: 0,
+            mach_kv_max: roundup,
+            influx_syscall_max: 0,
+            influx_kv_max: 0,
+          }, '*')
+        } else if (STORAGE == "Influx") {
+          window.top.postMessage({
+            mach_syscall_max: 0,
+            mach_kv_max: 0,
+            influx_syscall_max: 0,
+            influx_kv_max: roundup,
+          }, '*')
+        }
 
         kvPercentileAxisY.minimum = 0;
         kvPercentileAxisY.maximum = PAGE_STATE.kv_max;
@@ -356,12 +367,13 @@
       title: "Latency (ms)",
       fontFamily: "arial",
       titleFontSize: 16,
+      labelFontSize: 16,
     }
     var schedEventDataAxisY = {}
 
     var syscallPercentileChartObject = {
       title: {
-        text: "Read System Call Latency in ms (>" + (TILE * 100) + "th \%ile)",
+        text: "Read System Call Latency in ms (>" + Number((TILE * 100).toFixed(5)) + "th \%ile)",
         fontFamily: "arial",
         fontSize: 16,
         fontWeight: "bold",
@@ -453,15 +465,6 @@
       var update_fn = function(data) {
         //console.log(data["ReadSyscalls"]);
 
-        //var max_y = data.ReadSyscalls.max_y;
-        //var roundup = roundUpY(max_y) / 100;
-
-        //console.log("duration max y", max_y, roundup);
-
-        //syscallPercentileAxisY.minimum = 0;
-        //syscallPercentileAxisY.maximum = roundup;
-        //syscallPercentileAxisY.interval = roundup / 4;
-
         var l = data.ReadSyscalls.data.length;
         for (var i = 0; i < l; i++) {
           var item = data.ReadSyscalls.data[i].Syscall;
@@ -479,12 +482,21 @@
           }
         }
         var roundup = roundUpY(max_y);
-        window.top.postMessage({
-          mach_syscall_max: 0,
-          mach_kv_max: 0,
-          influx_syscall_max: roundup,
-          influx_kv_max: 0,
-        }, '*')
+        if (STORAGE == "Mach") {
+          window.top.postMessage({
+            mach_syscall_max: roundup,
+            mach_kv_max: 0,
+            influx_syscall_max: 0,
+            influx_kv_max: 0,
+          }, '*')
+        } else if (STORAGE == "Influx") {
+          window.top.postMessage({
+            mach_syscall_max: 0,
+            mach_kv_max: 0,
+            influx_syscall_max: roundup,
+            influx_kv_max: 0,
+          }, '*')
+        }
 
         syscallPercentileAxisY.minimum = 0;
         syscallPercentileAxisY.maximum = PAGE_STATE.syscall_max;
@@ -653,11 +665,13 @@
     syscallPercentileChart.render();
     kvPercentileChart.render();
     function updateData() {
-      updateDataReceived();
-      updateCompleteness();
-      updateReadSyscallsChart();
-      updateKvPercentileChart();
-      updateSchedulerChart();
+      if (!PAGE_STATE.pause) {
+        updateDataReceived();
+        updateCompleteness();
+        updateReadSyscallsChart();
+        updateKvPercentileChart();
+        updateSchedulerChart();
+      }
     }
     setInterval(updateData, 1000);
 

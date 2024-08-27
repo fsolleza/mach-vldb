@@ -33,7 +33,7 @@ ADDR_KV_8 := 0.0.0.0:3708
 WORKLOAD_ADDRS := $(ADDR_KV_2) $(ADDR_KV_4) $(ADDR_KV_6) $(ADDR_KV_8)
 
 CPUS_MEMSTORE         := 50-53
-CPUS_MACH             := 54-55
+CPUS_MACH             := 54
 CPUS_INFLUX           := 55-60
 CPUS_WEBAPP           := 10-15
 CPUS_KV_WORKLOAD      := 1-10

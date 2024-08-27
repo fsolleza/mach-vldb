@@ -51,8 +51,8 @@ fn counter2() {
 	let dropped = DROPPED.swap(0, SeqCst);
 	OPS_PER_SEC.swap(read_ops, SeqCst);
 	println!(
-		"Reads: {} Writes: {} Generated: {}, Dropped: {}",
-		read_ops, write_ops, ops, dropped
+		"Reads: {} Writes: {} Dropped: {}",
+		read_ops, write_ops, dropped
 	);
 }
 
